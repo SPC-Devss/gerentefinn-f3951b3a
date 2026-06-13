@@ -23,11 +23,11 @@ export function AppShell({ title, subtitle, action, children }: { title: string;
     <div className="flex h-screen overflow-hidden">
       <AppNav />
       <main className="flex-1 min-w-0 overflow-y-auto">
-        <header className="sticky top-0 z-10 bg-background/70 backdrop-blur border-b border-border px-4 sm:px-6 py-3 sm:py-4 flex items-center gap-3">
+        <header className="sticky top-0 z-10 bg-background/40 backdrop-blur-xl border-b border-white/5 px-4 sm:px-6 py-3 sm:py-4 flex items-center gap-3">
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
               <button
-                className="md:hidden h-10 w-10 -ml-2 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                className="md:hidden h-10 w-10 -ml-2 rounded-xl flex items-center justify-center text-muted-foreground hover:bg-white/5 hover:text-foreground"
                 aria-label="Abrir menu"
               >
                 <Menu className="h-5 w-5" />
@@ -39,7 +39,7 @@ export function AppShell({ title, subtitle, action, children }: { title: string;
             </SheetContent>
           </Sheet>
           <div className="min-w-0 flex-1">
-            <h1 className="font-display text-lg sm:text-xl font-semibold leading-tight truncate">{title}</h1>
+            <h1 className="font-display text-lg sm:text-xl font-medium leading-tight truncate tracking-tight">{title}</h1>
             {subtitle && <p className="text-xs sm:text-sm text-muted-foreground mt-0.5 truncate">{subtitle}</p>}
           </div>
           {action && <div className="shrink-0">{action}</div>}

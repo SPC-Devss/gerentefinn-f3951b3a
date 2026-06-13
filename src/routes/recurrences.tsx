@@ -74,7 +74,7 @@ function RecurrencesPage() {
           <p className="text-sm text-muted-foreground mt-1">Cadastre seu salário, aluguel, assinaturas etc.</p>
         </div>
       ) : (
-        <div className="rounded-xl border border-border bg-card/40 divide-y divide-border overflow-hidden">
+        <div className="tile divide-y divide-border overflow-hidden">
           {q.data.map((r) => {
             const exp = r.type === "expense";
             return (

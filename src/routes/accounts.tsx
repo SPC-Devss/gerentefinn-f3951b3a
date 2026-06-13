@@ -78,7 +78,7 @@ function AccountsPage() {
           {q.data.map((a) => {
             const Icon = TYPE_ICONS[a.type] ?? Wallet;
             return (
-              <div key={a.id} className="rounded-xl border border-border bg-card/40 p-4 relative">
+              <div key={a.id} className="tile p-4 relative">
                 <button
                   onClick={() => { if (confirm(`Remover "${a.name}"? Todas as movimentações ligadas a essa conta ficarão sem vínculo.`)) del.mutate(a.id); }}
                   className="absolute top-2 right-2 p-1.5 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition"

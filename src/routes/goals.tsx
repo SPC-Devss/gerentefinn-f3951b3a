@@ -65,7 +65,7 @@ function GoalsPage() {
             const pct = Math.min(100, (cur / tgt) * 100);
             const done = g.status === "completed";
             return (
-              <div key={g.id} className="rounded-xl border border-border bg-card/40 p-4 group relative">
+              <div key={g.id} className="tile p-4 group relative">
                 <button
                   onClick={() => { if (confirm(`Remover "${g.name}"?`)) del.mutate(g.id); }}
                   className="absolute top-2 right-2 p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition"
