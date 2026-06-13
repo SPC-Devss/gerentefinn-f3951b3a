@@ -112,7 +112,7 @@ function ImportPage() {
   return (
     <AppShell title="Importar extrato" subtitle="Carregue extratos OFX, CSV ou faturas em PDF">
       <div className="space-y-6">
-        <div className="rounded-xl border border-border bg-card/40 p-5 space-y-4">
+        <div className="tile p-5 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label>Conta (opcional)</Label>
@@ -154,7 +154,7 @@ function ImportPage() {
         </div>
 
         {parsed && parsed.length > 0 && (
-          <div className="rounded-xl border border-border bg-card/40 overflow-hidden">
+          <div className="tile overflow-hidden">
             <div className="px-5 py-4 border-b border-border flex flex-wrap items-center gap-4">
               <div>
                 <div className="font-medium">{selectedCount} de {parsed.length} selecionadas</div>
