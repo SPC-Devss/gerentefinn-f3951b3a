@@ -1,48 +1,77 @@
-# Otimização Mobile/Tablet — Gerente Finn
 
-Hoje o app foi desenhado para desktop: a navegação lateral fixa de 64px ocupa espaço precioso no celular, várias telas (Dashboard, Lançamentos, Faturas, Parcelas, Relatórios) usam grids/filtros lado a lado que estouram em telas pequenas, e tabelas/diálogos não rolam bem em mobile. A proposta é tornar **toda a aplicação totalmente responsiva**, sem mudar funcionalidades.
+# Redesign visual estilo ZimaOS
 
-## Escopo
+Aplico a estética do ZimaOS (preto profundo, tiles arredondados com efeito glass, brilhos diagonais de fundo, tipografia leve e espaçada) ao Finn. Nenhuma regra de negócio, query ou server function muda — só apresentação.
 
-Apenas mudanças de UI/layout (frontend). Nenhuma alteração em regras de negócio, banco ou server functions.
+## 1. Paleta e fundo (`src/styles.css`)
 
-## O que vai mudar
+Migrar de Midnight Indigo para "Zima Black":
 
-### 1. Shell e navegação (base de tudo)
-- **`AppNav`**: vira navegação adaptativa.
-  - **Mobile (<768px)**: sidebar escondida, abre como **drawer** (Sheet do shadcn) via botão "hambúrguer" no header. Itens em lista vertical com ícone + rótulo (sem depender de hover/tooltip, que não funciona em touch).
-  - **Tablet (768–1024px)**: sidebar compacta atual (64px com tooltip), igual desktop.
-  - **Desktop (≥1024px)**: igual hoje.
-- **`AppShell`**:
-  - Header sticky ganha botão de menu em mobile e o `action` (botão "Novo lançamento" etc.) fica acessível abaixo do título quando faltar espaço.
-  - Padding adaptativo: `px-4 py-4` no mobile, `px-6 py-6` no desktop.
-  - Remove `max-w-6xl` em mobile para usar toda a largura.
+- `--background`: preto quase puro (oklch ~0.08)
+- `--card`: cinza-chumbo translúcido (oklch ~0.15) — base dos tiles glass
+- `--border`: borda sutil branca a ~6%
+- `--primary`: mantém indigo/violeta atual como accent (botões, glow do Finn, gráficos)
+- Body ganha background com brilhos diagonais sutis estilo ZimaOS:
+  ```
+  background:
+    radial-gradient(1200px 600px at 20% -10%, rgba(255,255,255,0.05), transparent),
+    radial-gradient(800px 500px at 90% 110%, rgba(120,80,255,0.08), transparent),
+    linear-gradient(120deg, transparent 40%, rgba(255,255,255,0.025) 50%, transparent 60%),
+    #07070a;
+  ```
+- Nova classe utilitária `.tile` para o efeito vidro: `bg-card/60 backdrop-blur-xl border border-white/5 rounded-2xl shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]`
+- Aumentar `--radius` para `1rem` (tiles mais arredondados, como ZimaOS).
 
-### 2. Padrões responsivos aplicados em todas as telas
-- **Barras de filtro**: hoje usam `flex flex-wrap` com `Select` de largura fixa `w-[170px]`. Vai virar `w-full sm:w-[170px]` em mobile e, quando houver muitos filtros, agrupar em um botão "Filtros" que abre um Sheet — mantendo a tela limpa.
-- **Grids de KPI**: `grid-cols-2 sm:grid-cols-2 lg:grid-cols-4` (2 cards por linha no celular em vez de 1, melhor uso do espaço).
-- **Gráficos `recharts`**: `ResponsiveContainer` já cuida da largura; altura reduzida em mobile (`h-48 md:h-64`), fontes de eixos menores, `YAxis width` reduzido e formatadores compactos (`R$ 1,2k`).
-- **Tabelas (Lançamentos, Faturas, Parcelas, Recorrências, Contas)**: em telas <md viram **lista de cards** (uma linha = um card empilhado com label/valor). Em ≥md mantêm a tabela atual. Padrão único aplicado via um wrapper utilitário.
-- **Diálogos (`Dialog`)**: em mobile usam altura quase-cheia, scroll interno, e os formulários passam de 2 colunas → 1 coluna (`grid-cols-1 md:grid-cols-2`).
-- **Chat**: bolhas com `max-w-[85%] md:max-w-[70%]`, input fixo no rodapé com safe-area iOS.
+## 2. Dashboard estilo ZimaOS (`src/routes/dashboard.tsx`)
 
-### 3. Telas individuais a revisar
-Aplicando os padrões acima, cada rota recebe uma passada:
-`/dashboard`, `/transactions`, `/accounts`, `/budgets`, `/invoices`, `/installments`, `/forecast`, `/reports`, `/goals`, `/recurrences`, `/import`, `/settings`, `/chat`, `/login`.
+Reorganizar em duas colunas no desktop, empilhado no mobile:
 
-### 4. Tipografia, alvos de toque e meta viewport
-- Botões/links interativos com altura mínima de 40px (alvo de toque recomendado).
-- Texto base ≥14px em mobile; títulos `text-xl md:text-2xl`.
-- Verificar `<meta name="viewport" content="width=device-width, initial-scale=1">` no `__root.tsx` (TanStack Start já inclui, confirmar).
-- Tabelas/listas com `tabular-nums` para alinhar valores monetários.
+```text
+┌──────────────┬──────────────────────────────┐
+│ Relógio+Data │  Filtros (período)           │
+│              │  Tile grid: Lançamentos,     │
+│ Resumo $     │  Faturas, Parcelas, Metas,   │
+│              │  Recorrências, Orçamentos,   │
+│ Contas       │  Relatórios, Importar,       │
+│              │  Chat                        │
+│ Fluxo (mini) ├──────────────────────────────┤
+│              │  Gráficos (área + categoria) │
+└──────────────┴──────────────────────────────┘
+```
 
-## Detalhes técnicos
+**Coluna esquerda — widgets (todos como tiles glass):**
+- **Relógio + data**: hora grande (font-display, tracking-tight), data por extenso em pt-BR, atualiza a cada minuto.
+- **Resumo financeiro**: substitui o "Sistema/CPU/RAM" do ZimaOS — dois mini-rings (Receitas / Despesas, % do orçamento) + saldo do mês.
+- **Contas**: lista compacta com nome + saldo; cartões de crédito mostram barra de uso do limite (igual barra de armazenamento do ZimaOS).
+- **Mini fluxo**: sparkline (Area do recharts sem eixos) dos últimos 14 dias + setinhas de entrada/saída do dia.
 
-- **Breakpoints Tailwind padrão**: `sm` 640, `md` 768, `lg` 1024, `xl` 1280.
-- **Drawer mobile**: usar `Sheet` do shadcn (já instalado) controlado pelo `AppNav`. Hook `useIsMobile` já existe em `src/hooks/use-mobile.tsx`.
-- **Sem regressão desktop**: todas as classes adicionadas serão *mobile-first* com overrides `md:`/`lg:` para preservar a aparência atual em telas grandes.
-- **Sem mudança no design system**: cores, fontes e tokens em `src/styles.css` permanecem.
+**Coluna direita — "Aplicativos":**
+- Header "Aplicativos" igual ZimaOS.
+- Grid `grid-cols-2 sm:grid-cols-3 lg:grid-cols-4` de tiles quadrados (cada um vira `<Link>` para a rota): ícone grande centralizado + label embaixo. Hover: leve elevação + brilho do accent.
+- Abaixo: os gráficos atuais (série, por categoria, fixas vs variáveis, metas, últimas movimentações), todos convertidos para `.tile`.
+
+Filtros existentes ficam compactados num único botão "Filtros" que abre Sheet (mobile) ou row colapsável (desktop).
+
+## 3. Revisão visual global
+
+Aplicar o vocabulário em todas as rotas existentes, sem alterar conteúdo:
+
+- **`AppShell` / header**: header fica transparente sobre o gradient, com `backdrop-blur` apenas ao rolar. Título em `font-display` mais leve.
+- **`AppNav` (sidebar md+)**: fundo `bg-transparent` + tiles dos ícones com a mesma linguagem glass; item ativo ganha glow do primary.
+- **Cards de todas as telas** (`transactions`, `invoices`, `installments`, `forecast`, `reports`, `accounts`, `budgets`, `goals`, `recurrences`, `settings`, `chat`): substituir `rounded-xl border border-border bg-card/40` por `.tile` (rounded-2xl, blur, borda branca sutil).
+- **Inputs, Selects, Buttons** (shadcn): ajustar variantes para casar com o fundo preto (border `white/10`, hover `white/5`).
+- **Recharts**: grids e eixos com opacidade menor (`rgba(255,255,255,0.04)`), cores mantidas.
+- **Chat (`chat.$threadId.tsx`)**: bolhas com efeito glass; bolha do usuário em accent indigo translúcido.
+- **Login (`login.tsx`)**: card central vira tile glass com glow.
+
+## 4. Detalhes técnicos
+
+- Sem dependências novas. Tudo com Tailwind v4 + tokens em `src/styles.css`.
+- Glass usa só `backdrop-filter` padrão (Tailwind cuida do prefixo).
+- Sem mudança em rotas, server functions ou schema.
+- Mobile-first preservado: a coluna de widgets vira stack acima do grid no `<lg`.
+- Breakpoints chave verificados: 375, 768, 1024, 1440.
 
 ## Entrega
 
-Após aprovar, eu implemento numa única passada e testo os breakpoints chave (375, 768, 1024) no preview.
+Após aprovar, implemento numa passada só: edito `styles.css`, `app-shell.tsx`, `app-nav.tsx`, `dashboard.tsx` (reescrita média) e faço o varrer de classes nos demais routes. Não altero lógica de dados.
