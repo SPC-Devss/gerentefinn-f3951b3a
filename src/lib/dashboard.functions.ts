@@ -54,7 +54,10 @@ export const getDashboard = createServerFn({ method: "GET" })
     const { supabase, userId } = context;
     const { period, accountId, categoryId, accountKind } = data;
 
-    await supabase.rpc("materialize_due_recurrences", { _user_id: userId });
+    {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      await supabaseAdmin.rpc("materialize_due_recurrences", { _user_id: userId });
+    }
 
     const { start: periodStart, end: periodEnd } = rangeFor(period, data.month, data.year);
 

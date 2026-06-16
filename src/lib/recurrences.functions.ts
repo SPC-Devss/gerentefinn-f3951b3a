@@ -73,8 +73,9 @@ export const deleteRecurrence = createServerFn({ method: "POST" })
 export const materializeDue = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    const { supabase, userId } = context;
-    const { data, error } = await supabase.rpc("materialize_due_recurrences", { _user_id: userId });
+    const { userId } = context;
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data, error } = await supabaseAdmin.rpc("materialize_due_recurrences", { _user_id: userId });
     if (error) throw new Error(error.message);
     return { inserted: data ?? 0 };
   });

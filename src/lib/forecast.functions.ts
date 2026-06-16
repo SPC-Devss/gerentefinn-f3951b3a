@@ -7,8 +7,9 @@ export const getCashflowForecast = createServerFn({ method: "GET" })
   .inputValidator((i: unknown) => z.object({ days: z.number().int().min(7).max(180).default(30) }).parse(i ?? {}))
   .handler(async ({ context, data }) => {
     const { supabase, userId } = context;
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
 
-    const { data: series, error } = await supabase.rpc("forecast_cashflow", {
+    const { data: series, error } = await supabaseAdmin.rpc("forecast_cashflow", {
       _user_id: userId,
       _days: data.days,
     });
