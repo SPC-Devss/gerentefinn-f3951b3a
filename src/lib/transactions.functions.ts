@@ -37,6 +37,38 @@ export const summaryServerFn = createServerFn({ method: "GET" })
     return { income, expense, balance: income - expense };
   });
 
+export const createTransaction = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) =>
+    z.object({
+      type: z.enum(["income", "expense", "transfer"]),
+      amount: z.number().positive(),
+      description: z.string().min(1).max(200),
+      occurred_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      category_id: z.string().uuid().nullable().optional(),
+      account_id: z.string().uuid().nullable().optional(),
+    }).parse(i),
+  )
+  .handler(async ({ context, data }) => {
+    const { supabase, userId } = context;
+    const { data: row, error } = await supabase
+      .from("transactions")
+      .insert({
+        user_id: userId,
+        type: data.type,
+        amount: data.amount,
+        description: data.description,
+        occurred_at: data.occurred_at,
+        category_id: data.category_id ?? null,
+        account_id: data.account_id ?? null,
+        source: "manual",
+      })
+      .select("id")
+      .single();
+    if (error) throw new Error(error.message);
+    return row;
+  });
+
 export const updateTransaction = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((i: unknown) =>
