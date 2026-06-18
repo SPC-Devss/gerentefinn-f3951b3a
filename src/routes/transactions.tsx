@@ -218,9 +218,14 @@ function TransactionsPage() {
       title="Lançamentos"
       subtitle="Veja, edite ou remova suas movimentações"
       action={
-        <Button variant="outline" size="sm" onClick={() => window.print()} aria-label="Imprimir">
-          <Printer className="h-4 w-4 mr-2" /> Imprimir
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" onClick={() => setCreateOpen(true)}>
+            <Plus className="h-4 w-4 mr-2" /> Novo lançamento
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => window.print()} aria-label="Imprimir">
+            <Printer className="h-4 w-4 mr-2" /> Imprimir
+          </Button>
+        </div>
       }
     >
       <div className="space-y-8">
