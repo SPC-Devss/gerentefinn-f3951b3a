@@ -56,6 +56,25 @@ function TransactionsPage() {
   const [newCat, setNewCat] = useState("");
   const [newIcon, setNewIcon] = useState("");
 
+  // New manual launch
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const [createOpen, setCreateOpen] = useState(false);
+  const emptyForm = {
+    type: "expense" as "income" | "expense",
+    description: "",
+    amount: "" as string,
+    occurred_at: todayIso,
+    accountKind: "checking" as "checking" | "credit_card",
+    account_id: "" as string,
+    category_id: "" as string,
+    installments: false,
+    installments_count: 2,
+  };
+  const [form, setForm] = useState(emptyForm);
+  const [quickCatOpen, setQuickCatOpen] = useState(false);
+  const [quickCatName, setQuickCatName] = useState("");
+  const [quickCatIcon, setQuickCatIcon] = useState("");
+
   const years = useMemo(() => {
     const set = new Set<number>();
     set.add(now.getFullYear());
