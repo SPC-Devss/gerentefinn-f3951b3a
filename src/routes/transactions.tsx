@@ -120,23 +120,6 @@ function TransactionsPage() {
     qc.invalidateQueries({ queryKey: ["accounts"] });
   };
 
-  const upd = useMutation({
-    mutationFn: (d: Draft) =>
-      updateTransaction({
-        data: {
-          id: d.id, type: d.type, amount: d.amount, description: d.description,
-          occurred_at: d.occurred_at, category_id: d.category_id, account_id: d.account_id,
-        },
-      }),
-    onSuccess: () => { toast.success("Lançamento atualizado"); setEdit(null); invalidate(); },
-    onError: (e: Error) => toast.error(e.message),
-  });
-
-  const del = useMutation({
-    mutationFn: (id: string) => deleteTransaction({ data: { id } }),
-    onSuccess: () => { toast.success("Lançamento removido"); invalidate(); },
-    onError: (e: Error) => toast.error(e.message),
-  });
 
   const upd = useMutation({
     mutationFn: (d: Draft) =>
