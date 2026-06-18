@@ -138,6 +138,80 @@ function TransactionsPage() {
     onError: (e: Error) => toast.error(e.message),
   });
 
+  const upd = useMutation({
+    mutationFn: (d: Draft) =>
+      updateTransaction({
+        data: {
+          id: d.id, type: d.type, amount: d.amount, description: d.description,
+          occurred_at: d.occurred_at, category_id: d.category_id, account_id: d.account_id,
+        },
+      }),
+    onSuccess: () => { toast.success("Lançamento atualizado"); setEdit(null); invalidate(); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const create = useMutation({
+    mutationFn: async () => {
+      const amount = Number(String(form.amount).replace(",", "."));
+      if (!form.description.trim()) throw new Error("Informe a descrição");
+      if (!(amount > 0)) throw new Error("Informe um valor válido");
+      if (!form.account_id) throw new Error("Selecione uma conta ou cartão");
+      const account = accs.data?.find((a) => a.id === form.account_id);
+      const isCC = account?.type === "credit_card";
+      if (form.installments && !isCC) throw new Error("Parcelamento só em cartão de crédito");
+      if (form.installments) {
+        if (form.installments_count < 2) throw new Error("Mínimo de 2 parcelas");
+        await createInstallmentPurchase({
+          data: {
+            description: form.description.trim(),
+            total_amount: amount,
+            installments_count: form.installments_count,
+            first_due_date: form.occurred_at,
+            account_id: form.account_id,
+            category_id: form.category_id || null,
+          },
+        });
+      } else {
+        await createTransaction({
+          data: {
+            type: form.type,
+            amount,
+            description: form.description.trim(),
+            occurred_at: form.occurred_at,
+            category_id: form.category_id || null,
+            account_id: form.account_id,
+          },
+        });
+      }
+    },
+    onSuccess: () => {
+      toast.success("Lançamento salvo com sucesso");
+      setCreateOpen(false);
+      setForm(emptyForm);
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["installments"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const quickAddCat = useMutation({
+    mutationFn: () => createCategory({ data: { name: quickCatName.trim(), icon: quickCatIcon.trim() || null } }),
+    onSuccess: (row) => {
+      toast.success("Categoria criada");
+      qc.invalidateQueries({ queryKey: ["categories"] });
+      if (row?.id) setForm((f) => ({ ...f, category_id: row.id }));
+      setQuickCatName(""); setQuickCatIcon(""); setQuickCatOpen(false);
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const del = useMutation({
+    mutationFn: (id: string) => deleteTransaction({ data: { id } }),
+    onSuccess: () => { toast.success("Lançamento removido"); invalidate(); },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
   const bulkDel = useMutation({
     mutationFn: (ids: string[]) => deleteTransactionsBulk({ data: { ids } }),
     onSuccess: (r) => { toast.success(`${r.count} lançamento(s) removido(s)`); setSelected(new Set()); invalidate(); },
