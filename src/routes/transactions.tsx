@@ -464,6 +464,156 @@ function TransactionsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={createOpen} onOpenChange={(v) => { if (!v) { setCreateOpen(false); setQuickCatOpen(false); } }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle>Novo lançamento</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label>Descrição</Label>
+              <Input
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Ex: Mercado, salário, conta de luz…"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Tipo</Label>
+                <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v as "income" | "expense", installments: v === "income" ? false : form.installments })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="expense">Despesa</SelectItem>
+                    <SelectItem value="income">Receita</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Valor (R$)</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  inputMode="decimal"
+                  value={form.amount}
+                  onChange={(e) => setForm({ ...form, amount: e.target.value })}
+                  placeholder="0,00"
+                />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Data</Label>
+              <Input type="date" value={form.occurred_at} onChange={(e) => setForm({ ...form, occurred_at: e.target.value })} />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Pagamento</Label>
+              <Select
+                value={form.accountKind}
+                onValueChange={(v) => setForm({ ...form, accountKind: v as "checking" | "credit_card", account_id: "", installments: v === "checking" ? false : form.installments })}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="checking">Conta corrente / dinheiro</SelectItem>
+                  <SelectItem value="credit_card">Cartão de crédito</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>{form.accountKind === "credit_card" ? "Cartão" : "Conta"}</Label>
+              <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
+                <SelectTrigger><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                <SelectContent>
+                  {(accs.data ?? [])
+                    .filter((a) => !a.archived)
+                    .filter((a) => form.accountKind === "credit_card" ? a.type === "credit_card" : a.type !== "credit_card")
+                    .map((a) => (
+                      <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {form.accountKind === "credit_card" && form.type === "expense" && (
+              <div className="space-y-2 rounded-lg border border-border p-3">
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <Checkbox
+                    checked={form.installments}
+                    onCheckedChange={(v) => setForm({ ...form, installments: !!v })}
+                  />
+                  Compra parcelada
+                </label>
+                {form.installments && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Número de parcelas</Label>
+                    <Input
+                      type="number"
+                      min={2}
+                      max={360}
+                      value={form.installments_count}
+                      onChange={(e) => setForm({ ...form, installments_count: Math.max(2, Number(e.target.value) || 2) })}
+                    />
+                    {Number(form.amount) > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        {form.installments_count}× de {formatBRL(Number(form.amount) / form.installments_count)}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label>Categoria</Label>
+                <button
+                  type="button"
+                  className="text-xs text-primary hover:underline"
+                  onClick={() => setQuickCatOpen((v) => !v)}
+                >
+                  {quickCatOpen ? "Cancelar" : "+ Nova categoria"}
+                </button>
+              </div>
+              <Select value={form.category_id || "none"} onValueChange={(v) => setForm({ ...form, category_id: v === "none" ? "" : v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sem categoria</SelectItem>
+                  {cats.data?.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>{c.icon ? `${c.icon} ` : ""}{c.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {quickCatOpen && (
+                <div className="flex items-end gap-2 pt-2">
+                  <div className="flex-1 space-y-1.5">
+                    <Label className="text-xs">Nome</Label>
+                    <Input value={quickCatName} onChange={(e) => setQuickCatName(e.target.value)} placeholder="Ex: Pet shop" />
+                  </div>
+                  <div className="w-20 space-y-1.5">
+                    <Label className="text-xs">Ícone</Label>
+                    <Input value={quickCatIcon} onChange={(e) => setQuickCatIcon(e.target.value)} placeholder="🐶" />
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={!quickCatName.trim() || quickAddCat.isPending}
+                    onClick={() => quickAddCat.mutate()}
+                  >
+                    Criar
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
+            <Button disabled={create.isPending} onClick={() => create.mutate()}>
+              {create.isPending ? "Salvando…" : "Salvar lançamento"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppShell>
   );
 }
