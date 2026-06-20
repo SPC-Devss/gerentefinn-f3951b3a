@@ -231,7 +231,7 @@ export const Route = createFileRoute("/api/chat")({
           }),
           create_category: tool({
             description: "Cria uma categoria customizada.",
-            inputSchema: z.object({ name: z.string().min(1).max(40), icon: z.string().max(8).optional() }),
+            inputSchema: z.object({ name: z.string().min(1).max(40), icon: z.string().optional() }),
             execute: async ({ name, icon }) => {
               const { data, error } = await sb
                 .from("categories").insert({ name, icon: icon ?? null, user_id: userId, is_default: false })
