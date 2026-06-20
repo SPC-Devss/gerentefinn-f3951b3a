@@ -76,6 +76,14 @@ function TransactionsPage() {
   const [quickCatOpen, setQuickCatOpen] = useState(false);
   const [quickCatName, setQuickCatName] = useState("");
   const [quickCatIcon, setQuickCatIcon] = useState("");
+  const [dupExisting, setDupExisting] = useState<{
+    id: string;
+    description: string | null;
+    occurred_at: string;
+    amount: number;
+    type: string;
+  } | null>(null);
+
 
   const years = useMemo(() => {
     const set = new Set<number>();
