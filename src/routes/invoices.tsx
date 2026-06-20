@@ -28,12 +28,13 @@ const statusFor = (s: string) => STATUS[s] ?? { label: s ?? "—", variant: "sec
 function InvoicesPage() {
   const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const isProjected = !!selectedId && selectedId.startsWith("projected-");
 
   const q = useQuery({ queryKey: ["invoices"], queryFn: () => listInvoices() });
   const detailQ = useQuery({
     queryKey: ["invoice", selectedId],
     queryFn: () => getInvoiceDetail({ data: { id: selectedId! } }),
-    enabled: !!selectedId,
+    enabled: !!selectedId && !isProjected,
   });
 
   const payM = useMutation({
