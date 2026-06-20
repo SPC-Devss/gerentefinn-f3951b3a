@@ -385,17 +385,18 @@ function FinanceWidget({ income, expense, balance }: { income: number; expense: 
 
 type AccountRow = { id: string; name: string; type: string; balance: number; credit_limit: number | null; color?: string | null };
 function AccountsWidget({ accounts }: { accounts: AccountRow[] }) {
-  const shown = accounts.filter((a) => true).slice(0, 5);
+  const shown = accounts;
   return (
     <div className="tile p-4">
       <div className="flex items-center justify-between mb-3">
-        <div className="text-sm font-medium">Contas</div>
+        <div className="text-sm font-medium">Contas <span className="text-[10px] text-muted-foreground">({shown.length})</span></div>
         <Link to="/accounts" className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground">Ver</Link>
       </div>
       {shown.length === 0 ? (
         <div className="text-xs text-muted-foreground py-4 text-center">Nenhuma conta</div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+
           {shown.map((a) => {
             const isCard = a.type === "credit_card";
             const limit = Number(a.credit_limit ?? 0);
@@ -425,17 +426,17 @@ function AccountsWidget({ accounts }: { accounts: AccountRow[] }) {
 }
 
 function CardsWidget({ accounts }: { accounts: AccountRow[] }) {
-  const shown = accounts.slice(0, 5);
+  const shown = accounts;
   return (
     <div className="tile p-4">
       <div className="flex items-center justify-between mb-3">
-        <div className="text-sm font-medium">Cartões</div>
+        <div className="text-sm font-medium">Cartões <span className="text-[10px] text-muted-foreground">({shown.length})</span></div>
         <Link to="/accounts" className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground">Ver</Link>
       </div>
       {shown.length === 0 ? (
         <div className="text-xs text-muted-foreground py-4 text-center">Nenhum cartão</div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
           {shown.map((a) => {
             const limit = Number(a.credit_limit ?? 0);
             const used = Math.max(0, -a.balance);
