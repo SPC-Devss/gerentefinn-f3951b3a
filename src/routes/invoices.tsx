@@ -17,21 +17,24 @@ export const Route = createFileRoute("/invoices")({
   head: () => ({ meta: [{ title: "Faturas de cartão — Finn" }] }),
 });
 
-const STATUS: Record<string, { label: string; variant: "default" | "secondary" | "destructive" }> = {
+const STATUS: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
   open: { label: "Aberta", variant: "secondary" },
   closed: { label: "Fechada", variant: "default" },
   paid: { label: "Paga", variant: "default" },
+  projected: { label: "Projetada", variant: "outline" },
 };
+const statusFor = (s: string) => STATUS[s] ?? { label: s ?? "—", variant: "secondary" as const };
 
 function InvoicesPage() {
   const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const isProjected = !!selectedId && selectedId.startsWith("projected-");
 
   const q = useQuery({ queryKey: ["invoices"], queryFn: () => listInvoices() });
   const detailQ = useQuery({
     queryKey: ["invoice", selectedId],
     queryFn: () => getInvoiceDetail({ data: { id: selectedId! } }),
-    enabled: !!selectedId,
+    enabled: !!selectedId && !isProjected,
   });
 
   const payM = useMutation({
@@ -72,7 +75,7 @@ function InvoicesPage() {
               </div>
               <div className="text-right">
                 <div className="font-semibold">{formatBRL(Number(inv.total_amount))}</div>
-                <Badge variant={STATUS[inv.status].variant} className="text-xs mt-1">{STATUS[inv.status].label}</Badge>
+                <Badge variant={statusFor(inv.projected ? "projected" : inv.status).variant} className="text-xs mt-1">{statusFor(inv.projected ? "projected" : inv.status).label}</Badge>
               </div>
             </button>
           );
@@ -84,16 +87,33 @@ function InvoicesPage() {
           <DialogHeader>
             <DialogTitle>Detalhe da fatura</DialogTitle>
           </DialogHeader>
-          {detailQ.data && (
+          {isProjected && (() => {
+            const inv = q.data?.find((i) => i.id === selectedId);
+            const acc = inv?.accounts as { name?: string } | null;
+            return (
+              <div className="space-y-3">
+                <div>
+                  <div className="font-semibold">{acc?.name}</div>
+                  <div className="text-sm text-muted-foreground">
+                    Projeção · Vence {inv && formatDate(inv.due_date)} · Total estimado {inv && formatBRL(Number(inv.total_amount))}
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Esta fatura ainda não foi gerada. O valor é a soma das parcelas futuras agendadas para este mês de referência.
+                </p>
+              </div>
+            );
+          })()}
+          {!isProjected && detailQ.data && detailQ.data.invoice && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="font-semibold">{(detailQ.data.invoice?.accounts as { name?: string } | null)?.name}</div>
+                  <div className="font-semibold">{(detailQ.data.invoice.accounts as { name?: string } | null)?.name}</div>
                   <div className="text-sm text-muted-foreground">
-                    Vence {detailQ.data.invoice && formatDate(detailQ.data.invoice.due_date)} · Total {detailQ.data.invoice && formatBRL(Number(detailQ.data.invoice.total_amount))}
+                    Vence {formatDate(detailQ.data.invoice.due_date)} · Total {formatBRL(Number(detailQ.data.invoice.total_amount))}
                   </div>
                 </div>
-                {detailQ.data.invoice?.status !== "paid" ? (
+                {detailQ.data.invoice.status !== "paid" ? (
                   <Button onClick={() => payM.mutate({ id: selectedId!, paid: true })} disabled={payM.isPending}>
                     <Check className="h-4 w-4 mr-2" /> Marcar como paga
                   </Button>
@@ -115,7 +135,9 @@ function InvoicesPage() {
                         {formatDate(t.occurred_at as string)} · {(t.categories as { name?: string } | null)?.name ?? "Sem categoria"}
                       </div>
                     </div>
-                    <div className="font-medium">{formatBRL(Number(t.amount))}</div>
+                    <div className={`font-medium ${t.type === "income" ? "text-emerald-500" : ""}`}>
+                      {t.type === "income" ? "−" : ""}{formatBRL(Number(t.amount))}
+                    </div>
                   </div>
                 ))}
               </div>
