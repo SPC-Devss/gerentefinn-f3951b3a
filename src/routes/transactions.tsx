@@ -567,7 +567,30 @@ function TransactionsPage() {
                     ))}
                 </SelectContent>
               </Select>
+              {!form.account_id && (
+                <p className="text-xs text-destructive">Selecione uma conta ou cartão para continuar.</p>
+              )}
             </div>
+
+            <div className="space-y-1.5">
+              <Label>Recorrência</Label>
+              <Select
+                value={form.recurrence}
+                onValueChange={(v) => setForm({ ...form, recurrence: v as typeof form.recurrence, installments: v !== "none" ? false : form.installments })}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Não recorrente</SelectItem>
+                  <SelectItem value="weekly">Semanal</SelectItem>
+                  <SelectItem value="monthly">Mensal</SelectItem>
+                  <SelectItem value="yearly">Anual</SelectItem>
+                </SelectContent>
+              </Select>
+              {form.recurrence !== "none" && (
+                <p className="text-[11px] text-muted-foreground">
+                  Será criado um vínculo automático em <span className="text-foreground">Recorrências</span>.
+                </p>
+              )}
 
             {form.accountKind === "credit_card" && form.type === "expense" && (
               <div className="space-y-2 rounded-lg border border-border p-3">
