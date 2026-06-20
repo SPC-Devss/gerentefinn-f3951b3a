@@ -8,7 +8,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Progress } from "@/components/ui/progress";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Target, Plus, Trash2, CheckCircle2 } from "lucide-react";
 import { formatBRL, formatDate } from "@/lib/format";
 import { toast } from "sonner";
@@ -22,18 +30,35 @@ export const Route = createFileRoute("/goals")({
 function GoalsPage() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
+  const [progressTarget, setProgressTarget] = useState<{ id: string; name: string } | null>(null);
+  const [progressValue, setProgressValue] = useState<string>("");
+
   const q = useQuery({ queryKey: ["goals"], queryFn: () => listGoals() });
 
   const del = useMutation({
     mutationFn: (id: string) => deleteGoal({ data: { id } }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["goals"] }); toast.success("Meta removida"); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["goals"] });
+      toast.success("Meta removida");
+      setPendingDelete(null);
+    },
+    onError: (e: Error) => toast.error(e.message),
   });
 
   const addProg = useMutation({
     mutationFn: ({ id, amount }: { id: string; amount: number }) => addGoalProgress({ data: { id, amount } }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["goals"] }); toast.success("Progresso atualizado"); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["goals"] });
+      toast.success("Progresso atualizado");
+      setProgressTarget(null);
+      setProgressValue("");
+    },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  const progressNumber = Number(String(progressValue).replace(",", "."));
+  const progressValid = Number.isFinite(progressNumber) && progressNumber > 0;
 
   return (
     <AppShell
@@ -67,8 +92,9 @@ function GoalsPage() {
             return (
               <div key={g.id} className="tile p-4 group relative">
                 <button
-                  onClick={() => { if (confirm(`Remover "${g.name}"?`)) del.mutate(g.id); }}
+                  onClick={() => setPendingDelete({ id: g.id, name: g.name })}
                   className="absolute top-2 right-2 p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition"
+                  aria-label="Remover meta"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
@@ -89,11 +115,17 @@ function GoalsPage() {
                 <Progress value={pct} className="mb-3" />
                 {!done && (
                   <div className="flex gap-2">
-                    <Button size="sm" variant="secondary" className="flex-1" onClick={() => {
-                      const v = prompt(`Adicionar quanto em "${g.name}"?`);
-                      const n = Number(v);
-                      if (n > 0) addProg.mutate({ id: g.id, amount: n });
-                    }}>Adicionar valor</Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="flex-1"
+                      onClick={() => {
+                        setProgressTarget({ id: g.id, name: g.name });
+                        setProgressValue("");
+                      }}
+                    >
+                      Adicionar valor
+                    </Button>
                   </div>
                 )}
               </div>
@@ -101,6 +133,79 @@ function GoalsPage() {
           })}
         </div>
       )}
+
+      {/* Confirmação de exclusão */}
+      <Dialog open={!!pendingDelete} onOpenChange={(o) => { if (!o && !del.isPending) setPendingDelete(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Remover meta?</DialogTitle>
+            <DialogDescription>
+              A meta “{pendingDelete?.name}” será removida. Esta ação não pode ser desfeita.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPendingDelete(null)} disabled={del.isPending}>
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => pendingDelete && del.mutate(pendingDelete.id)}
+              disabled={del.isPending}
+            >
+              {del.isPending ? "Removendo…" : "Remover"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Diálogo para adicionar progresso */}
+      <Dialog
+        open={!!progressTarget}
+        onOpenChange={(o) => {
+          if (!o && !addProg.isPending) { setProgressTarget(null); setProgressValue(""); }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Adicionar valor</DialogTitle>
+            <DialogDescription>
+              Quanto adicionar em “{progressTarget?.name}”?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="progress-amount">Valor (R$)</Label>
+            <Input
+              id="progress-amount"
+              type="number"
+              min={0}
+              step="0.01"
+              autoFocus
+              value={progressValue}
+              onChange={(e) => setProgressValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && progressValid && progressTarget) {
+                  addProg.mutate({ id: progressTarget.id, amount: progressNumber });
+                }
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => { setProgressTarget(null); setProgressValue(""); }}
+              disabled={addProg.isPending}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => progressTarget && addProg.mutate({ id: progressTarget.id, amount: progressNumber })}
+              disabled={!progressValid || addProg.isPending}
+            >
+              {addProg.isPending ? "Salvando…" : "Adicionar"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppShell>
   );
 }
