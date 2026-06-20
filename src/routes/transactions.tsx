@@ -741,6 +741,42 @@ function TransactionsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!dupExisting} onOpenChange={(o) => { if (!o) setDupExisting(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Possível lançamento duplicado</DialogTitle>
+          </DialogHeader>
+          {dupExisting && (
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                Já existe um lançamento idêntico (mesma conta, data, tipo e valor):
+              </p>
+              <div className="rounded-md border border-border p-3 space-y-1">
+                <div className="font-medium">{dupExisting.description ?? "Sem descrição"}</div>
+                <div className="text-xs text-muted-foreground">
+                  {dupExisting.occurred_at} · {dupExisting.type === "income" ? "Receita" : dupExisting.type === "expense" ? "Despesa" : "Transferência"} · {formatBRL(dupExisting.amount)}
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Deseja registrar mesmo assim ou cancelar?
+              </p>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDupExisting(null)} disabled={create.isPending}>
+              Cancelar
+            </Button>
+            <Button
+              disabled={create.isPending}
+              onClick={() => { setDupExisting(null); create.mutate({ force: true }); }}
+            >
+              {create.isPending ? "Registrando…" : "Registrar mesmo assim"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppShell>
+
   );
 }
