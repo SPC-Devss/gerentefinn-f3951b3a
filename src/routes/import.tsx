@@ -86,7 +86,7 @@ function ImportPage() {
   }
 
   const importM = useMutation({
-    mutationFn: () => {
+    mutationFn: (opts: { force?: boolean; skip_indices?: number[] } = {}) => {
       const selected = (parsed ?? []).filter((t) => t._enabled);
       return bulkImportTransactions({
         data: {
@@ -98,17 +98,25 @@ function ImportPage() {
             occurred_at: t.occurred_at,
             category_name: t.suggested_category ?? null,
           })),
+          force: opts.force === true,
+          skip_indices: opts.skip_indices,
         },
       });
     },
     onSuccess: (r) => {
+      if (r && r.ok === false && r.duplicate) {
+        setDupes(r.duplicates);
+        return;
+      }
       toast.success(`${r.inserted} transações importadas`);
       setParsed(null);
       setFile(null);
       setConfirmOpen(false);
+      setDupes(null);
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
 
   const selectedCount = (parsed ?? []).filter((t) => t._enabled).length;
   const totalExpense = (parsed ?? []).filter((t) => t._enabled && t.type === "expense").reduce((s, t) => s + t.amount, 0);
