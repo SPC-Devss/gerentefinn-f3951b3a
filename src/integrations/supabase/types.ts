@@ -503,6 +503,13 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      account_balances: {
+        Args: { _user_id: string }
+        Returns: {
+          account_id: string
+          balance: number
+        }[]
+      }
       forecast_cashflow: {
         Args: { _days: number; _user_id: string }
         Returns: {
