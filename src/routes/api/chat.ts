@@ -22,9 +22,11 @@ Como agir:
 - Metas: create_goal, update_goal_progress, list_goals.
 - Recorrências (mensalidades, assinaturas, salário fixo): create_recurrence, list_recurrences.
 - Resumo / saldo / "quanto gastei": get_summary ou list_recent.
+- ANTI-DUPLICIDADE: se record_transaction retornar { ok: false, duplicate: true }, NÃO insira de novo. Mostre os dados do lançamento existente e pergunte em UMA frase se o usuário confirma o registro mesmo assim. Só chame record_transaction novamente, com confirm_duplicate: true, depois do "sim" explícito do usuário.
 - Após qualquer ação, confirme em UMA frase curta. Pode adicionar um insight relevante.
 - Nunca julgue. Máximo 1 emoji por mensagem. Nunca peça desculpas.
 - Datas no formato YYYY-MM-DD. Hoje é ${new Date().toISOString().slice(0, 10)}.`;
+
 
 export const Route = createFileRoute("/api/chat")({
   server: {
