@@ -591,6 +591,9 @@ function TransactionsPage() {
                   Será criado um vínculo automático em <span className="text-foreground">Recorrências</span>.
                 </p>
               )}
+            </div>
+
+
 
             {form.accountKind === "credit_card" && form.type === "expense" && (
               <div className="space-y-2 rounded-lg border border-border p-3">
