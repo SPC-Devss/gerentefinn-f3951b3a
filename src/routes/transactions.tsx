@@ -712,7 +712,7 @@ function TransactionsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
-            <Button disabled={create.isPending} onClick={() => create.mutate()}>
+            <Button disabled={create.isPending || !form.account_id} onClick={() => create.mutate()}>
               {create.isPending ? "Salvando…" : "Salvar lançamento"}
             </Button>
           </DialogFooter>
