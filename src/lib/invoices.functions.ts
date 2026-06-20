@@ -190,9 +190,12 @@ export const listInvoices = createServerFn({ method: "GET" })
         };
       });
 
-    const all = [...realInvoices, ...projected].sort((a, b) =>
-      a.due_date < b.due_date ? 1 : -1,
-    );
+    const all = [...realInvoices, ...projected].sort((a, b) => {
+      const nameA = a.accounts?.name ?? "";
+      const nameB = b.accounts?.name ?? "";
+      if (nameA !== nameB) return nameA.localeCompare(nameB);
+      return a.due_date < b.due_date ? -1 : 1;
+    });
     return all;
   });
 
