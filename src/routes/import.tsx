@@ -359,11 +359,12 @@ function ImportPage() {
               <Button variant="ghost" onClick={() => setConfirmOpen(false)} disabled={importM.isPending}>
                 Voltar para editar
               </Button>
-              <Button onClick={() => importM.mutate()} disabled={importM.isPending}>
+              <Button onClick={() => importM.mutate({})} disabled={importM.isPending}>
                 {importM.isPending
                   ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Importando…</>
                   : <><CheckCircle2 className="h-4 w-4 mr-1" /> Confirmar e importar {selectedCount}</>}
               </Button>
+
             </DialogFooter>
           </DialogContent>
         </Dialog>
