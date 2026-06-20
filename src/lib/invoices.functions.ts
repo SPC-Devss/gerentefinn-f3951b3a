@@ -74,7 +74,7 @@ export const listInvoices = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { supabase, userId } = context;
     const today = new Date();
-    const horizonEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 12, 28))
+    const horizonEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 3, 28))
       .toISOString()
       .slice(0, 10);
 
