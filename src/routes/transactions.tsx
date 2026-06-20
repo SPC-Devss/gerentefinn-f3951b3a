@@ -158,7 +158,7 @@ function TransactionsPage() {
   });
 
   const create = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (opts: { force?: boolean } = {}) => {
       const amount = Number(String(form.amount).replace(",", "."));
       if (!form.description.trim()) throw new Error("Informe a descrição");
       if (!(amount > 0)) throw new Error("Informe um valor válido");
@@ -180,36 +180,50 @@ function TransactionsPage() {
             category_id: form.category_id || null,
           },
         });
-      } else {
-        await createTransaction({
+        return { kind: "ok" as const, createdRecurrence };
+      }
+      const res = await createTransaction({
+        data: {
+          type: form.type,
+          amount,
+          description: form.description.trim(),
+          occurred_at: form.occurred_at,
+          category_id: form.category_id || null,
+          account_id: form.account_id,
+          force: opts.force === true,
+        },
+      });
+      if (res && res.ok === false && res.duplicate) {
+        return { kind: "duplicate" as const, existing: res.existing };
+      }
+      if (form.recurrence !== "none") {
+        await createRecurrence({
           data: {
+            description: form.description.trim(),
             type: form.type,
             amount,
-            description: form.description.trim(),
-            occurred_at: form.occurred_at,
+            frequency: form.recurrence,
+            next_run_at: form.occurred_at,
             category_id: form.category_id || null,
             account_id: form.account_id,
           },
         });
-        if (form.recurrence !== "none") {
-          await createRecurrence({
-            data: {
-              description: form.description.trim(),
-              type: form.type,
-              amount,
-              frequency: form.recurrence,
-              next_run_at: form.occurred_at,
-              category_id: form.category_id || null,
-              account_id: form.account_id,
-            },
-          });
-          createdRecurrence = true;
-        }
+        createdRecurrence = true;
       }
-      return { createdRecurrence };
+      return { kind: "ok" as const, createdRecurrence };
     },
     onSuccess: (r) => {
-      toast.success(r?.createdRecurrence ? "Lançamento salvo e recorrência criada" : "Lançamento salvo com sucesso");
+      if (r.kind === "duplicate") {
+        setDupExisting({
+          id: r.existing.id as string,
+          description: (r.existing.description as string | null) ?? null,
+          occurred_at: r.existing.occurred_at as string,
+          amount: Number(r.existing.amount),
+          type: r.existing.type as string,
+        });
+        return;
+      }
+      toast.success(r.createdRecurrence ? "Lançamento salvo e recorrência criada" : "Lançamento salvo com sucesso");
       setCreateOpen(false);
       setForm(emptyForm);
       invalidate();
@@ -219,6 +233,7 @@ function TransactionsPage() {
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
 
   const quickAddCat = useMutation({
     mutationFn: () => createCategory({ data: { name: quickCatName.trim(), icon: quickCatIcon.trim() || null } }),
