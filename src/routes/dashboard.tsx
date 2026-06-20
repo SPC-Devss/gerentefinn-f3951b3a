@@ -106,7 +106,8 @@ function DashboardPage() {
         <aside className="space-y-4">
           <ClockWidget />
           <FinanceWidget income={d?.month.income ?? 0} expense={d?.month.expense ?? 0} balance={d?.month.balance ?? 0} />
-          <AccountsWidget accounts={accountsQ.data ?? []} />
+          <AccountsWidget accounts={(accountsQ.data ?? []).filter((a) => a.type !== "credit_card")} />
+          <CardsWidget accounts={(accountsQ.data ?? []).filter((a) => a.type === "credit_card")} />
           <FlowWidget series={d?.series ?? []} />
         </aside>
 
@@ -412,6 +413,48 @@ function AccountsWidget({ accounts }: { accounts: AccountRow[] }) {
                 {isCard && limit > 0 && (
                   <div className="mt-1.5 h-1 w-full rounded-full bg-white/5 overflow-hidden">
                     <div className="h-full rounded-full bg-gradient-to-r from-primary to-fuchsia-500" style={{ width: `${pct}%` }} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CardsWidget({ accounts }: { accounts: AccountRow[] }) {
+  const shown = accounts.slice(0, 5);
+  return (
+    <div className="tile p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="text-sm font-medium">Cartões</div>
+        <Link to="/accounts" className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground">Ver</Link>
+      </div>
+      {shown.length === 0 ? (
+        <div className="text-xs text-muted-foreground py-4 text-center">Nenhum cartão</div>
+      ) : (
+        <div className="space-y-3">
+          {shown.map((a) => {
+            const limit = Number(a.credit_limit ?? 0);
+            const used = Math.max(0, -a.balance);
+            const pct = limit > 0 ? Math.min(100, (used / limit) * 100) : 0;
+            return (
+              <div key={a.id}>
+                <div className="flex items-center gap-2 text-xs">
+                  <CreditCard className="h-3 w-3 shrink-0" style={{ color: a.color ?? "#7c6cff" }} />
+                  <span className="truncate flex-1">{a.name}</span>
+                  <span className="tabular-nums text-muted-foreground">{formatBRL(used)}</span>
+                </div>
+                {limit > 0 && (
+                  <div className="mt-1.5 h-1 w-full rounded-full bg-white/5 overflow-hidden">
+                    <div className="h-full rounded-full bg-gradient-to-r from-rose-500 to-orange-400" style={{ width: `${pct}%` }} />
+                  </div>
+                )}
+                {limit > 0 && (
+                  <div className="mt-0.5 text-[10px] text-muted-foreground tabular-nums text-right">
+                    {Math.round(pct)}% de {formatBRL(limit)}
                   </div>
                 )}
               </div>

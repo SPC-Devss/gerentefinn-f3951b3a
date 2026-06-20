@@ -13,7 +13,8 @@ import { listTransactions, createTransaction, updateTransaction, deleteTransacti
 import { listCategories, createCategory, deleteCategory } from "@/lib/categories.functions";
 import { listAccounts } from "@/lib/accounts.functions";
 import { createInstallmentPurchase } from "@/lib/installments.functions";
-import { Pencil, Trash2, Plus, Search, Printer } from "lucide-react";
+import { createRecurrence } from "@/lib/recurrences.functions";
+import { Pencil, Trash2, Plus, Search, Printer, Upload } from "lucide-react";
 import { formatBRL } from "@/lib/format";
 import { toast } from "sonner";
 
@@ -69,6 +70,7 @@ function TransactionsPage() {
     category_id: "" as string,
     installments: false,
     installments_count: 2,
+    recurrence: "none" as "none" | "weekly" | "monthly" | "yearly",
   };
   const [form, setForm] = useState(emptyForm);
   const [quickCatOpen, setQuickCatOpen] = useState(false);
@@ -86,7 +88,21 @@ function TransactionsPage() {
     if (!txs.data) return [];
     const s = search.toLowerCase().trim();
     return txs.data.filter((t) => {
-      if (s && !t.description.toLowerCase().includes(s)) return false;
+      if (s) {
+        const acc = (t as { accounts?: { name?: string } | null }).accounts;
+        const cat = (t as { categories?: { name?: string } | null }).categories;
+        const amt = Number(t.amount);
+        const haystack = [
+          t.description,
+          acc?.name ?? "",
+          cat?.name ?? "",
+          String(amt),
+          amt.toFixed(2),
+          amt.toFixed(2).replace(".", ","),
+          formatBRL(amt),
+        ].join(" ").toLowerCase();
+        if (!haystack.includes(s)) return false;
+      }
       const d = new Date(t.occurred_at + "T00:00:00");
       if (year !== "all" && d.getFullYear() !== Number(year)) return false;
       if (month !== "all" && d.getMonth() + 1 !== Number(month)) return false;
@@ -142,6 +158,8 @@ function TransactionsPage() {
       const account = accs.data?.find((a) => a.id === form.account_id);
       const isCC = account?.type === "credit_card";
       if (form.installments && !isCC) throw new Error("Parcelamento só em cartão de crédito");
+      if (form.installments && form.recurrence !== "none") throw new Error("Não é possível combinar parcelamento e recorrência");
+      let createdRecurrence = false;
       if (form.installments) {
         if (form.installments_count < 2) throw new Error("Mínimo de 2 parcelas");
         await createInstallmentPurchase({
@@ -165,15 +183,31 @@ function TransactionsPage() {
             account_id: form.account_id,
           },
         });
+        if (form.recurrence !== "none") {
+          await createRecurrence({
+            data: {
+              description: form.description.trim(),
+              type: form.type,
+              amount,
+              frequency: form.recurrence,
+              next_run_at: form.occurred_at,
+              category_id: form.category_id || null,
+              account_id: form.account_id,
+            },
+          });
+          createdRecurrence = true;
+        }
       }
+      return { createdRecurrence };
     },
-    onSuccess: () => {
-      toast.success("Lançamento salvo com sucesso");
+    onSuccess: (r) => {
+      toast.success(r?.createdRecurrence ? "Lançamento salvo e recorrência criada" : "Lançamento salvo com sucesso");
       setCreateOpen(false);
       setForm(emptyForm);
       invalidate();
       qc.invalidateQueries({ queryKey: ["installments"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["recurrences"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -233,7 +267,7 @@ function TransactionsPage() {
           <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-end gap-3 mb-3">
             <div className="relative col-span-2 sm:flex-1 sm:min-w-[180px] sm:max-w-sm">
               <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar descrição…" className="pl-9" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar descrição, valor, conta ou categoria…" className="pl-9" />
             </div>
             <div className="space-y-1.5 min-w-0">
               <Label className="text-xs">Mês</Label>
@@ -533,7 +567,33 @@ function TransactionsPage() {
                     ))}
                 </SelectContent>
               </Select>
+              {!form.account_id && (
+                <p className="text-xs text-destructive">Selecione uma conta ou cartão para continuar.</p>
+              )}
             </div>
+
+            <div className="space-y-1.5">
+              <Label>Recorrência</Label>
+              <Select
+                value={form.recurrence}
+                onValueChange={(v) => setForm({ ...form, recurrence: v as typeof form.recurrence, installments: v !== "none" ? false : form.installments })}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Não recorrente</SelectItem>
+                  <SelectItem value="weekly">Semanal</SelectItem>
+                  <SelectItem value="monthly">Mensal</SelectItem>
+                  <SelectItem value="yearly">Anual</SelectItem>
+                </SelectContent>
+              </Select>
+              {form.recurrence !== "none" && (
+                <p className="text-[11px] text-muted-foreground">
+                  Será criado um vínculo automático em <span className="text-foreground">Recorrências</span>.
+                </p>
+              )}
+            </div>
+
+
 
             {form.accountKind === "credit_card" && form.type === "expense" && (
               <div className="space-y-2 rounded-lg border border-border p-3">
@@ -585,22 +645,66 @@ function TransactionsPage() {
                 </SelectContent>
               </Select>
               {quickCatOpen && (
-                <div className="flex items-end gap-2 pt-2">
-                  <div className="flex-1 space-y-1.5">
+                <div className="space-y-3 pt-2 rounded-lg border border-border p-3">
+                  <div className="space-y-1.5">
                     <Label className="text-xs">Nome</Label>
                     <Input value={quickCatName} onChange={(e) => setQuickCatName(e.target.value)} placeholder="Ex: Pet shop" />
                   </div>
-                  <div className="w-20 space-y-1.5">
-                    <Label className="text-xs">Ícone</Label>
-                    <Input value={quickCatIcon} onChange={(e) => setQuickCatIcon(e.target.value)} placeholder="🐶" />
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Ícone {quickCatIcon && <span className="ml-1">— atual: {quickCatIcon.startsWith("data:") ? <img src={quickCatIcon} alt="" className="inline h-4 w-4 align-middle rounded" /> : quickCatIcon}</span>}</Label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(form.type === "income"
+                        ? ["💰","💵","💼","🏦","📈","🎁","🪙","💳"]
+                        : ["🛒","🍔","⛽","🏠","💡","💊","🎬","✈️","🐶","📚","👕","🚗","📱","🎓","🧾","🛠️"]
+                      ).map((emo) => (
+                        <button
+                          key={emo}
+                          type="button"
+                          onClick={() => setQuickCatIcon(emo)}
+                          className={`h-9 w-9 rounded-md border text-lg flex items-center justify-center transition ${quickCatIcon === emo ? "border-primary bg-primary/10" : "border-border hover:bg-accent"}`}
+                          aria-label={`Selecionar ${emo}`}
+                        >
+                          {emo}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-primary hover:underline cursor-pointer mt-1">
+                      <Upload className="h-3.5 w-3.5" />
+                      Enviar imagem do meu computador
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const okTypes = ["image/png","image/jpeg","image/svg+xml","image/webp"];
+                          if (!okTypes.includes(file.type)) {
+                            toast.error("Formato inválido. Use PNG, JPG, SVG ou WebP.");
+                            e.target.value = "";
+                            return;
+                          }
+                          if (file.size > 256 * 1024) {
+                            toast.error("Arquivo muito grande. Máximo 256 KB.");
+                            e.target.value = "";
+                            return;
+                          }
+                          const reader = new FileReader();
+                          reader.onload = () => setQuickCatIcon(String(reader.result || ""));
+                          reader.readAsDataURL(file);
+                        }}
+                      />
+                    </label>
+                    <p className="text-[10px] text-muted-foreground">PNG, JPG, SVG ou WebP · até 256 KB · recomendado 64×64 px quadrado.</p>
                   </div>
                   <Button
                     type="button"
                     size="sm"
+                    className="w-full"
                     disabled={!quickCatName.trim() || quickAddCat.isPending}
                     onClick={() => quickAddCat.mutate()}
                   >
-                    Criar
+                    Criar categoria
                   </Button>
                 </div>
               )}
@@ -608,7 +712,7 @@ function TransactionsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
-            <Button disabled={create.isPending} onClick={() => create.mutate()}>
+            <Button disabled={create.isPending || !form.account_id} onClick={() => create.mutate()}>
               {create.isPending ? "Salvando…" : "Salvar lançamento"}
             </Button>
           </DialogFooter>

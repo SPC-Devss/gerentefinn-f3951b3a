@@ -1,77 +1,74 @@
+## 1. Dashboard — novo widget "Cartões"
 
-# Redesign visual estilo ZimaOS
+Em `src/routes/dashboard.tsx`:
+- Criar `CardsWidget` (componente similar ao `AccountsWidget`) que filtra `accounts` onde `type === "credit_card"` e mostra cada cartão com nome, valor usado (`-balance`) e barra de uso do limite.
+- Cabeçalho com título "Cartões" + link "Ver" apontando para `/accounts`.
+- Inserir o widget na coluna esquerda **entre** `AccountsWidget` e `FlowWidget`.
+- O `AccountsWidget` passa a listar apenas contas **não-cartão** (para evitar duplicação).
 
-Aplico a estética do ZimaOS (preto profundo, tiles arredondados com efeito glass, brilhos diagonais de fundo, tipografia leve e espaçada) ao Finn. Nenhuma regra de negócio, query ou server function muda — só apresentação.
+## 2. Tela /accounts — separação visual e edição
 
-## 1. Paleta e fundo (`src/styles.css`)
+Em `src/routes/accounts.tsx`:
+- Separar a grid em duas seções: **Contas correntes** (todos os tipos exceto `credit_card`) e, abaixo, um divisor (`<div className="border-t border-border" />` com título "Cartões de crédito") seguido dos cartões.
+- Cada card ganha um botão de **editar** (ícone `Pencil`) ao lado do botão deletar.
+- Clicar abre um Dialog reutilizando o `AccountForm` em modo edição, pré-preenchendo `name`, `type`, `institution`, `color`, `credit_limit`, `closing_day`, `due_day`.
+- Adicionar server function `updateAccount` em `src/lib/accounts.functions.ts` (mesmo schema do `createAccount` + `id`).
+- Refatorar `AccountForm` para aceitar prop opcional `initial` e chamar `updateAccount` quando houver id.
 
-Migrar de Midnight Indigo para "Zima Black":
+## 3. Tela /transactions — busca ampliada
 
-- `--background`: preto quase puro (oklch ~0.08)
-- `--card`: cinza-chumbo translúcido (oklch ~0.15) — base dos tiles glass
-- `--border`: borda sutil branca a ~6%
-- `--primary`: mantém indigo/violeta atual como accent (botões, glow do Finn, gráficos)
-- Body ganha background com brilhos diagonais sutis estilo ZimaOS:
+Em `src/routes/transactions.tsx`, no `filtered` useMemo: além de `description`, comparar `s` contra:
+- valor formatado (`String(t.amount)` e `formatBRL(Number(t.amount))`)
+- nome da conta/cartão (`t.accounts?.name`)
+- nome da categoria (`t.categories?.name`)
+Atualizar o placeholder do input para "Buscar descrição, valor, conta ou categoria…".
+
+## 4. Janela "Novo lançamento" — validação e recorrência
+
+Ainda em `src/routes/transactions.tsx`, no Dialog de criação:
+- **Validação obrigatória de conta**: desabilitar o botão "Salvar lançamento" quando `!form.account_id` e exibir mensagem inline "Selecione uma conta ou cartão".
+- **Campo Recorrência** (Select): "Não recorrente" / "Semanal" / "Mensal" / "Anual".
+  - Se recorrente, ao salvar chamar `createRecurrence` (de `src/lib/recurrences.functions.ts`) com `description`, `type`, `amount`, `frequency`, `next_run_at = occurred_at`, `category_id`, `account_id`. Também cria o lançamento atual via `createTransaction`. Invalida query `["recurrences"]` para refletir em `/recurrences`.
+  - Recorrência é mutuamente exclusiva com parcelamento.
+
+## 5. Categoria nova — seletor de ícones
+
+No bloco "Nova categoria" do mesmo Dialog:
+- Substituir o `Input` de ícone por um seletor com:
+  - **Grade de emojis sugeridos** condicionada a `form.type`:
+    - Despesa: 🛒 🍔 ⛽ 🏠 💡 💊 🎬 ✈️ 🐶 📚 👕 🚗 📱 🎓 🧾 🛠️
+    - Receita: 💰 💵 💼 🏦 📈 🎁 🪙 💳
+  - Botão "Enviar imagem do meu computador" (`<input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp">`).
+  - Texto auxiliar: "PNG, JPG, SVG ou WebP · até 256 KB · recomendado 64×64 px quadrado".
+  - Validação cliente: rejeitar arquivos acima de 256 KB ou fora dos tipos permitidos com `toast.error`.
+  - Arquivo válido é convertido para `data:` URL (base64) e armazenado como `icon` na categoria (campo `icon` já é texto livre — emojis curtos ou data-URL).
+- O ícone selecionado fica refletido em `quickCatIcon` (string) e enviado ao `createCategory` existente.
+
+## Detalhes técnicos
+
+- Nenhuma migração SQL: `updateAccount` usa tabela `accounts` existente, `recurrences` e `categories` já existem.
+- `AccountForm` recebe `initial?: AccountRow` e `mode: "create" | "edit"`; mantém o mesmo layout.
+- Server function nova:
+  ```ts
+  // src/lib/accounts.functions.ts
+  export const updateAccount = createServerFn({ method: "POST" })
+    .middleware([requireSupabaseAuth])
+    .inputValidator(/* id + mesmos campos do create, opcionais */)
+    .handler(async ({ context, data }) => {
+      const { id, ...patch } = data;
+      const { error } = await context.supabase
+        .from("accounts").update(patch)
+        .eq("id", id).eq("user_id", context.userId);
+      if (error) throw new Error(error.message);
+      return { ok: true };
+    });
   ```
-  background:
-    radial-gradient(1200px 600px at 20% -10%, rgba(255,255,255,0.05), transparent),
-    radial-gradient(800px 500px at 90% 110%, rgba(120,80,255,0.08), transparent),
-    linear-gradient(120deg, transparent 40%, rgba(255,255,255,0.025) 50%, transparent 60%),
-    #07070a;
-  ```
-- Nova classe utilitária `.tile` para o efeito vidro: `bg-card/60 backdrop-blur-xl border border-white/5 rounded-2xl shadow-[0_1px_0_0_rgba(255,255,255,0.04)_inset]`
-- Aumentar `--radius` para `1rem` (tiles mais arredondados, como ZimaOS).
+- Recorrência criada a partir do lançamento: invalidar `["recurrences"]` + `["transactions"]` + `["dashboard"]`.
+- Toast de confirmação único mostrando "Lançamento salvo" (e "Recorrência criada" quando aplicável).
 
-## 2. Dashboard estilo ZimaOS (`src/routes/dashboard.tsx`)
+## Arquivos alterados
 
-Reorganizar em duas colunas no desktop, empilhado no mobile:
-
-```text
-┌──────────────┬──────────────────────────────┐
-│ Relógio+Data │  Filtros (período)           │
-│              │  Tile grid: Lançamentos,     │
-│ Resumo $     │  Faturas, Parcelas, Metas,   │
-│              │  Recorrências, Orçamentos,   │
-│ Contas       │  Relatórios, Importar,       │
-│              │  Chat                        │
-│ Fluxo (mini) ├──────────────────────────────┤
-│              │  Gráficos (área + categoria) │
-└──────────────┴──────────────────────────────┘
-```
-
-**Coluna esquerda — widgets (todos como tiles glass):**
-- **Relógio + data**: hora grande (font-display, tracking-tight), data por extenso em pt-BR, atualiza a cada minuto.
-- **Resumo financeiro**: substitui o "Sistema/CPU/RAM" do ZimaOS — dois mini-rings (Receitas / Despesas, % do orçamento) + saldo do mês.
-- **Contas**: lista compacta com nome + saldo; cartões de crédito mostram barra de uso do limite (igual barra de armazenamento do ZimaOS).
-- **Mini fluxo**: sparkline (Area do recharts sem eixos) dos últimos 14 dias + setinhas de entrada/saída do dia.
-
-**Coluna direita — "Aplicativos":**
-- Header "Aplicativos" igual ZimaOS.
-- Grid `grid-cols-2 sm:grid-cols-3 lg:grid-cols-4` de tiles quadrados (cada um vira `<Link>` para a rota): ícone grande centralizado + label embaixo. Hover: leve elevação + brilho do accent.
-- Abaixo: os gráficos atuais (série, por categoria, fixas vs variáveis, metas, últimas movimentações), todos convertidos para `.tile`.
-
-Filtros existentes ficam compactados num único botão "Filtros" que abre Sheet (mobile) ou row colapsável (desktop).
-
-## 3. Revisão visual global
-
-Aplicar o vocabulário em todas as rotas existentes, sem alterar conteúdo:
-
-- **`AppShell` / header**: header fica transparente sobre o gradient, com `backdrop-blur` apenas ao rolar. Título em `font-display` mais leve.
-- **`AppNav` (sidebar md+)**: fundo `bg-transparent` + tiles dos ícones com a mesma linguagem glass; item ativo ganha glow do primary.
-- **Cards de todas as telas** (`transactions`, `invoices`, `installments`, `forecast`, `reports`, `accounts`, `budgets`, `goals`, `recurrences`, `settings`, `chat`): substituir `rounded-xl border border-border bg-card/40` por `.tile` (rounded-2xl, blur, borda branca sutil).
-- **Inputs, Selects, Buttons** (shadcn): ajustar variantes para casar com o fundo preto (border `white/10`, hover `white/5`).
-- **Recharts**: grids e eixos com opacidade menor (`rgba(255,255,255,0.04)`), cores mantidas.
-- **Chat (`chat.$threadId.tsx`)**: bolhas com efeito glass; bolha do usuário em accent indigo translúcido.
-- **Login (`login.tsx`)**: card central vira tile glass com glow.
-
-## 4. Detalhes técnicos
-
-- Sem dependências novas. Tudo com Tailwind v4 + tokens em `src/styles.css`.
-- Glass usa só `backdrop-filter` padrão (Tailwind cuida do prefixo).
-- Sem mudança em rotas, server functions ou schema.
-- Mobile-first preservado: a coluna de widgets vira stack acima do grid no `<lg`.
-- Breakpoints chave verificados: 375, 768, 1024, 1440.
-
-## Entrega
-
-Após aprovar, implemento numa passada só: edito `styles.css`, `app-shell.tsx`, `app-nav.tsx`, `dashboard.tsx` (reescrita média) e faço o varrer de classes nos demais routes. Não altero lógica de dados.
+- `src/lib/accounts.functions.ts` (adiciona `updateAccount`)
+- `src/routes/accounts.tsx` (separação + botão editar + dialog edição)
+- `src/routes/dashboard.tsx` (novo `CardsWidget`, ajuste no `AccountsWidget`)
+- `src/routes/transactions.tsx` (busca ampliada, validação de conta, select de recorrência, seletor de ícones com upload)
