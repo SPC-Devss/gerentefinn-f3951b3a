@@ -82,7 +82,7 @@ export const listInvoices = createServerFn({ method: "GET" })
       supabase
         .from("credit_card_invoices")
         .select(
-          "id,account_id,reference_month,closing_date,due_date,total_amount,status,paid_at,accounts(name,color,institution)",
+          "id,account_id,reference_month,closing_date,due_date,total_amount,status,paid_at",
         )
         .eq("user_id", userId)
         .order("due_date", { ascending: false }),
