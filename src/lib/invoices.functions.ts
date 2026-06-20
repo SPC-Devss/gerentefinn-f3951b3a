@@ -108,10 +108,21 @@ export const listInvoices = createServerFn({ method: "GET" })
     if (purchasesRes.error) throw new Error(purchasesRes.error.message);
     if (itemsRes.error) throw new Error(itemsRes.error.message);
 
-    const realInvoices = (invoicesRes.data ?? []).map((inv) => ({
-      ...inv,
-      projected: false as const,
-    }));
+    const accountsById = new Map<string, AccountLite>();
+    for (const a of accountsRes.data ?? []) {
+      accountsById.set(a.id, a as AccountLite);
+    }
+
+    const realInvoices = (invoicesRes.data ?? []).map((inv) => {
+      const acc = inv.account_id ? accountsById.get(inv.account_id) : undefined;
+      return {
+        ...inv,
+        accounts: acc
+          ? { name: acc.name, color: acc.color, institution: acc.institution }
+          : null,
+        projected: false as const,
+      };
+    });
 
     const accountsById = new Map<string, AccountLite>();
     for (const a of accountsRes.data ?? []) {
