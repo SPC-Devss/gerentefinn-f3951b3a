@@ -55,6 +55,34 @@ export const createAccount = createServerFn({ method: "POST" })
     return row;
   });
 
+export const updateAccount = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) =>
+    z
+      .object({
+        id: z.string().uuid(),
+        name: z.string().min(1).max(60),
+        type: z.enum(ACCOUNT_TYPES),
+        institution: z.string().max(60).optional().nullable(),
+        color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
+        closing_day: z.number().int().min(1).max(31).optional().nullable(),
+        due_day: z.number().int().min(1).max(31).optional().nullable(),
+        credit_limit: z.number().nonnegative().optional().nullable(),
+      })
+      .parse(i),
+  )
+  .handler(async ({ context, data }) => {
+    const { supabase, userId } = context;
+    const { id, ...patch } = data;
+    const { error } = await supabase
+      .from("accounts")
+      .update(patch)
+      .eq("id", id)
+      .eq("user_id", userId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
 export const archiveAccount = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((i: unknown) => z.object({ id: z.string().uuid(), archived: z.boolean() }).parse(i))
