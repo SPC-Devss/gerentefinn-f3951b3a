@@ -82,7 +82,7 @@ export const listInvoices = createServerFn({ method: "GET" })
       supabase
         .from("credit_card_invoices")
         .select(
-          "id,account_id,reference_month,closing_date,due_date,total_amount,status,paid_at,accounts(name,color,institution)",
+          "id,account_id,reference_month,closing_date,due_date,total_amount,status,paid_at",
         )
         .eq("user_id", userId)
         .order("due_date", { ascending: false }),
@@ -108,15 +108,22 @@ export const listInvoices = createServerFn({ method: "GET" })
     if (purchasesRes.error) throw new Error(purchasesRes.error.message);
     if (itemsRes.error) throw new Error(itemsRes.error.message);
 
-    const realInvoices = (invoicesRes.data ?? []).map((inv) => ({
-      ...inv,
-      projected: false as const,
-    }));
-
     const accountsById = new Map<string, AccountLite>();
     for (const a of accountsRes.data ?? []) {
       accountsById.set(a.id, a as AccountLite);
     }
+
+    const realInvoices = (invoicesRes.data ?? []).map((inv) => {
+      const acc = inv.account_id ? accountsById.get(inv.account_id) : undefined;
+      return {
+        ...inv,
+        accounts: acc
+          ? { name: acc.name, color: acc.color, institution: acc.institution }
+          : null,
+        projected: false as const,
+      };
+    });
+
     const purchaseAccount = new Map<string, string>();
     for (const p of purchasesRes.data ?? []) {
       if (p.account_id) purchaseAccount.set(p.id, p.account_id);
@@ -201,7 +208,7 @@ export const getInvoiceDetail = createServerFn({ method: "GET" })
       supabase
         .from("credit_card_invoices")
         .select(
-          "id,account_id,reference_month,closing_date,due_date,total_amount,status,paid_at,accounts(name,color,institution)",
+          "id,account_id,reference_month,closing_date,due_date,total_amount,status,paid_at",
         )
         .eq("id", data.id)
         .eq("user_id", userId)
@@ -215,7 +222,21 @@ export const getInvoiceDetail = createServerFn({ method: "GET" })
     ]);
     if (e1) throw new Error(e1.message);
     if (e2) throw new Error(e2.message);
-    return { invoice, transactions: txs ?? [], projected: false as const };
+    let accounts: { name: string; color: string | null; institution: string | null } | null = null;
+    if (invoice?.account_id) {
+      const { data: acc } = await supabase
+        .from("accounts")
+        .select("name,color,institution")
+        .eq("id", invoice.account_id)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (acc) accounts = acc;
+    }
+    return {
+      invoice: invoice ? { ...invoice, accounts } : null,
+      transactions: txs ?? [],
+      projected: false as const,
+    };
   });
 
 export const markInvoicePaid = createServerFn({ method: "POST" })
