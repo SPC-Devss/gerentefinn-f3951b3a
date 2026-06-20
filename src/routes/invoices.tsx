@@ -75,7 +75,7 @@ function InvoicesPage() {
               </div>
               <div className="text-right">
                 <div className="font-semibold">{formatBRL(Number(inv.total_amount))}</div>
-                <Badge variant={STATUS[inv.status].variant} className="text-xs mt-1">{STATUS[inv.status].label}</Badge>
+                <Badge variant={statusFor(inv.projected ? "projected" : inv.status).variant} className="text-xs mt-1">{statusFor(inv.projected ? "projected" : inv.status).label}</Badge>
               </div>
             </button>
           );
