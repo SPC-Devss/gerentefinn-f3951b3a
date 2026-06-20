@@ -19,7 +19,7 @@ export const listCategories = createServerFn({ method: "GET" })
 export const createCategory = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((i: unknown) =>
-    z.object({ name: z.string().min(1).max(40), icon: z.string().max(8).optional().nullable() }).parse(i),
+    z.object({ name: z.string().min(1).max(40), icon: z.string().optional().nullable() }).parse(i),
   )
   .handler(async ({ context, data }) => {
     const { supabase, userId } = context;
