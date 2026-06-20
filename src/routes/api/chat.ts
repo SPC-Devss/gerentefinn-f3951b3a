@@ -102,7 +102,8 @@ export const Route = createFileRoute("/api/chat")({
 
         const tools = {
           record_transaction: tool({
-            description: "Registra uma movimentação financeira (despesa, receita ou transferência).",
+            description:
+              "Registra uma movimentação financeira (despesa, receita ou transferência). Faz checagem de duplicidade pelo conjunto (conta, data, tipo, valor). Se duplicidade for detectada e confirm_duplicate não for true, retorna ok:false e duplicate:true com o lançamento existente, sem inserir.",
             inputSchema: z.object({
               type: z.enum(["expense", "income", "transfer"]),
               amount: z.number().positive(),
@@ -110,12 +111,39 @@ export const Route = createFileRoute("/api/chat")({
               category: z.enum(catNames as [string, ...string[]]).optional(),
               account_name: z.string().optional().describe("Nome da conta/cartão, se citado"),
               occurred_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+              confirm_duplicate: z
+                .boolean()
+                .optional()
+                .describe("Passe true SOMENTE após o usuário confirmar explicitamente que quer registrar mesmo sendo duplicado."),
             }),
-            execute: async ({ type, amount, description, category, account_name, occurred_at }) => {
+            execute: async ({ type, amount, description, category, account_name, occurred_at, confirm_duplicate }) => {
               const cat = category ? catList.find((c) => c.name === category) : null;
               const acc = account_name
                 ? accList.find((a) => a.name.toLowerCase().includes(account_name.toLowerCase()))
                 : null;
+
+              // Anti-duplicidade
+              if (!confirm_duplicate && acc?.id) {
+                const { data: dups } = await sb
+                  .from("transactions")
+                  .select("id,description,occurred_at,amount,type")
+                  .eq("user_id", userId)
+                  .eq("account_id", acc.id)
+                  .eq("type", type)
+                  .eq("occurred_at", occurred_at)
+                  .eq("amount", amount)
+                  .limit(1);
+                if (dups && dups.length > 0) {
+                  return {
+                    ok: false,
+                    duplicate: true,
+                    existing: dups[0],
+                    message:
+                      "Já existe um lançamento idêntico nesta conta, data, tipo e valor. Pergunte ao usuário se deseja registrar mesmo assim.",
+                  };
+                }
+              }
+
               const { data, error } = await sb
                 .from("transactions")
                 .insert({
@@ -134,6 +162,7 @@ export const Route = createFileRoute("/api/chat")({
               return { ok: true, transaction: data, category: cat?.name ?? "Outros", account: acc?.name ?? null };
             },
           }),
+
           list_recent: tool({
             description: "Lista as últimas movimentações.",
             inputSchema: z.object({ limit: z.number().int().min(1).max(50).default(10) }),
