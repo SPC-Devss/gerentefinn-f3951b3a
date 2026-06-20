@@ -158,6 +158,8 @@ function TransactionsPage() {
       const account = accs.data?.find((a) => a.id === form.account_id);
       const isCC = account?.type === "credit_card";
       if (form.installments && !isCC) throw new Error("Parcelamento só em cartão de crédito");
+      if (form.installments && form.recurrence !== "none") throw new Error("Não é possível combinar parcelamento e recorrência");
+      let createdRecurrence = false;
       if (form.installments) {
         if (form.installments_count < 2) throw new Error("Mínimo de 2 parcelas");
         await createInstallmentPurchase({
@@ -181,15 +183,31 @@ function TransactionsPage() {
             account_id: form.account_id,
           },
         });
+        if (form.recurrence !== "none") {
+          await createRecurrence({
+            data: {
+              description: form.description.trim(),
+              type: form.type,
+              amount,
+              frequency: form.recurrence,
+              next_run_at: form.occurred_at,
+              category_id: form.category_id || null,
+              account_id: form.account_id,
+            },
+          });
+          createdRecurrence = true;
+        }
       }
+      return { createdRecurrence };
     },
-    onSuccess: () => {
-      toast.success("Lançamento salvo com sucesso");
+    onSuccess: (r) => {
+      toast.success(r?.createdRecurrence ? "Lançamento salvo e recorrência criada" : "Lançamento salvo com sucesso");
       setCreateOpen(false);
       setForm(emptyForm);
       invalidate();
       qc.invalidateQueries({ queryKey: ["installments"] });
       qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["recurrences"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -249,7 +267,7 @@ function TransactionsPage() {
           <div className="grid grid-cols-2 sm:flex sm:flex-wrap sm:items-end gap-3 mb-3">
             <div className="relative col-span-2 sm:flex-1 sm:min-w-[180px] sm:max-w-sm">
               <Search className="h-4 w-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar descrição…" className="pl-9" />
+              <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar descrição, valor, conta ou categoria…" className="pl-9" />
             </div>
             <div className="space-y-1.5 min-w-0">
               <Label className="text-xs">Mês</Label>
