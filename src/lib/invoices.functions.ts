@@ -74,7 +74,7 @@ export const listInvoices = createServerFn({ method: "GET" })
   .handler(async ({ context }) => {
     const { supabase, userId } = context;
     const today = new Date();
-    const horizonEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 12, 28))
+    const horizonEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 3, 28))
       .toISOString()
       .slice(0, 10);
 
@@ -190,9 +190,12 @@ export const listInvoices = createServerFn({ method: "GET" })
         };
       });
 
-    const all = [...realInvoices, ...projected].sort((a, b) =>
-      a.due_date < b.due_date ? 1 : -1,
-    );
+    const all = [...realInvoices, ...projected].sort((a, b) => {
+      const nameA = a.accounts?.name ?? "";
+      const nameB = b.accounts?.name ?? "";
+      if (nameA !== nameB) return nameA.localeCompare(nameB);
+      return a.due_date < b.due_date ? -1 : 1;
+    });
     return all;
   });
 
