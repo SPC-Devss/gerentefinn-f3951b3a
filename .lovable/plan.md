@@ -1,74 +1,58 @@
-## 1. Dashboard — novo widget "Cartões"
+# Plano: Segurança estrutural, LGPD e performance
 
-Em `src/routes/dashboard.tsx`:
-- Criar `CardsWidget` (componente similar ao `AccountsWidget`) que filtra `accounts` onde `type === "credit_card"` e mostra cada cartão com nome, valor usado (`-balance`) e barra de uso do limite.
-- Cabeçalho com título "Cartões" + link "Ver" apontando para `/accounts`.
-- Inserir o widget na coluna esquerda **entre** `AccountsWidget` e `FlowWidget`.
-- O `AccountsWidget` passa a listar apenas contas **não-cartão** (para evitar duplicação).
+## 1. Migration — FKs com CASCADE em `user_id`
 
-## 2. Tela /accounts — separação visual e edição
+Nova migration adicionando `FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE` nas tabelas que hoje têm a coluna solta:
 
-Em `src/routes/accounts.tsx`:
-- Separar a grid em duas seções: **Contas correntes** (todos os tipos exceto `credit_card`) e, abaixo, um divisor (`<div className="border-t border-border" />` com título "Cartões de crédito") seguido dos cartões.
-- Cada card ganha um botão de **editar** (ícone `Pencil`) ao lado do botão deletar.
-- Clicar abre um Dialog reutilizando o `AccountForm` em modo edição, pré-preenchendo `name`, `type`, `institution`, `color`, `credit_limit`, `closing_day`, `due_day`.
-- Adicionar server function `updateAccount` em `src/lib/accounts.functions.ts` (mesmo schema do `createAccount` + `id`).
-- Refatorar `AccountForm` para aceitar prop opcional `initial` e chamar `updateAccount` quando houver id.
+- `accounts`, `goals`, `recurrences`, `budgets`, `credit_card_invoices`, `installment_purchases`, `installment_items`
 
-## 3. Tela /transactions — busca ampliada
+Para cada uma:
+```sql
+ALTER TABLE public.<t>
+  ADD CONSTRAINT <t>_user_id_fkey
+  FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+```
 
-Em `src/routes/transactions.tsx`, no `filtered` useMemo: além de `description`, comparar `s` contra:
-- valor formatado (`String(t.amount)` e `formatBRL(Number(t.amount))`)
-- nome da conta/cartão (`t.accounts?.name`)
-- nome da categoria (`t.categories?.name`)
-Atualizar o placeholder do input para "Buscar descrição, valor, conta ou categoria…".
+Por consistência, também adicionar a mesma FK CASCADE em `transactions`, `messages`, `threads` e `categories` (todas com `user_id` mas sem FK declarada). `categories.user_id` é nullable (categorias globais) — manter nullable e usar CASCADE apenas quando preenchido (CASCADE em coluna nullable funciona normalmente, linhas globais não são afetadas).
 
-## 4. Janela "Novo lançamento" — validação e recorrência
+A migration também cria uma RPC agregada usada pelo passo 3:
+```sql
+CREATE OR REPLACE FUNCTION public.account_balances(_user_id uuid)
+RETURNS TABLE(account_id uuid, balance numeric)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public AS $$
+  SELECT account_id,
+         SUM(CASE WHEN type='income' THEN amount
+                  WHEN type='expense' THEN -amount
+                  ELSE 0 END) AS balance
+  FROM public.transactions
+  WHERE user_id = _user_id AND account_id IS NOT NULL
+  GROUP BY account_id;
+$$;
+GRANT EXECUTE ON FUNCTION public.account_balances(uuid) TO authenticated;
+```
 
-Ainda em `src/routes/transactions.tsx`, no Dialog de criação:
-- **Validação obrigatória de conta**: desabilitar o botão "Salvar lançamento" quando `!form.account_id` e exibir mensagem inline "Selecione uma conta ou cartão".
-- **Campo Recorrência** (Select): "Não recorrente" / "Semanal" / "Mensal" / "Anual".
-  - Se recorrente, ao salvar chamar `createRecurrence` (de `src/lib/recurrences.functions.ts`) com `description`, `type`, `amount`, `frequency`, `next_run_at = occurred_at`, `category_id`, `account_id`. Também cria o lançamento atual via `createTransaction`. Invalida query `["recurrences"]` para refletir em `/recurrences`.
-  - Recorrência é mutuamente exclusiva com parcelamento.
+## 2. `deleteMyAccount` — limpeza LGPD completa
 
-## 5. Categoria nova — seletor de ícones
+Atualizar `src/lib/profile.functions.ts` para incluir as tabelas extras na limpeza explícita antes de remover o usuário do `auth`:
 
-No bloco "Nova categoria" do mesmo Dialog:
-- Substituir o `Input` de ícone por um seletor com:
-  - **Grade de emojis sugeridos** condicionada a `form.type`:
-    - Despesa: 🛒 🍔 ⛽ 🏠 💡 💊 🎬 ✈️ 🐶 📚 👕 🚗 📱 🎓 🧾 🛠️
-    - Receita: 💰 💵 💼 🏦 📈 🎁 🪙 💳
-  - Botão "Enviar imagem do meu computador" (`<input type="file" accept="image/png,image/jpeg,image/svg+xml,image/webp">`).
-  - Texto auxiliar: "PNG, JPG, SVG ou WebP · até 256 KB · recomendado 64×64 px quadrado".
-  - Validação cliente: rejeitar arquivos acima de 256 KB ou fora dos tipos permitidos com `toast.error`.
-  - Arquivo válido é convertido para `data:` URL (base64) e armazenado como `icon` na categoria (campo `icon` já é texto livre — emojis curtos ou data-URL).
-- O ícone selecionado fica refletido em `quickCatIcon` (string) e enviado ao `createCategory` existente.
+Lista final (ordem segura para evitar conflitos de FK):
+`installment_items` → `installment_purchases` → `credit_card_invoices` → `budgets` → `messages` → `threads` → `transactions` → `recurrences` → `goals` → `accounts` → `categories` → `profiles` → `auth.admin.deleteUser`.
+
+Mesmo com o CASCADE da etapa 1 cobrindo o caso, a remoção explícita garante limpeza auditável e independência de futuras mudanças no schema.
+
+## 3. `listAccounts` — saldo agregado no Postgres
+
+Em `src/lib/accounts.functions.ts`, substituir o `SELECT account_id,type,amount` por uma chamada à RPC `account_balances`:
+
+```ts
+const { data: balRows } = await supabase.rpc("account_balances", { _user_id: userId });
+const balances = Object.fromEntries((balRows ?? []).map(r => [r.account_id, Number(r.balance)]));
+```
+
+Mantém o shape de retorno (`{ ...account, balance }`) — nenhum consumidor precisa mudar. Elimina o transporte de N transações por requisição.
 
 ## Detalhes técnicos
 
-- Nenhuma migração SQL: `updateAccount` usa tabela `accounts` existente, `recurrences` e `categories` já existem.
-- `AccountForm` recebe `initial?: AccountRow` e `mode: "create" | "edit"`; mantém o mesmo layout.
-- Server function nova:
-  ```ts
-  // src/lib/accounts.functions.ts
-  export const updateAccount = createServerFn({ method: "POST" })
-    .middleware([requireSupabaseAuth])
-    .inputValidator(/* id + mesmos campos do create, opcionais */)
-    .handler(async ({ context, data }) => {
-      const { id, ...patch } = data;
-      const { error } = await context.supabase
-        .from("accounts").update(patch)
-        .eq("id", id).eq("user_id", context.userId);
-      if (error) throw new Error(error.message);
-      return { ok: true };
-    });
-  ```
-- Recorrência criada a partir do lançamento: invalidar `["recurrences"]` + `["transactions"]` + `["dashboard"]`.
-- Toast de confirmação único mostrando "Lançamento salvo" (e "Recorrência criada" quando aplicável).
-
-## Arquivos alterados
-
-- `src/lib/accounts.functions.ts` (adiciona `updateAccount`)
-- `src/routes/accounts.tsx` (separação + botão editar + dialog edição)
-- `src/routes/dashboard.tsx` (novo `CardsWidget`, ajuste no `AccountsWidget`)
-- `src/routes/transactions.tsx` (busca ampliada, validação de conta, select de recorrência, seletor de ícones com upload)
+- Tipos do Supabase (`src/integrations/supabase/types.ts`) são regenerados após a migration; só então o código do passo 3 que usa `supabase.rpc("account_balances", ...)` será aplicado.
+- Nenhuma mudança de RLS é necessária: as FKs respeitam o owner via `auth.users(id)` e a RPC é `SECURITY DEFINER` filtrada por `_user_id` (será chamada com `userId` do contexto autenticado).
+- Nenhuma migração de dados — apenas DDL aditivo. Caso já existam linhas com `user_id` órfão (sem usuário correspondente em `auth.users`), o `ADD CONSTRAINT` falhará; nesse caso, removo as linhas órfãs no início da migration com `DELETE ... WHERE user_id NOT IN (SELECT id FROM auth.users)`.
