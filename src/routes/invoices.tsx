@@ -17,11 +17,13 @@ export const Route = createFileRoute("/invoices")({
   head: () => ({ meta: [{ title: "Faturas de cartão — Finn" }] }),
 });
 
-const STATUS: Record<string, { label: string; variant: "default" | "secondary" | "destructive" }> = {
+const STATUS: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
   open: { label: "Aberta", variant: "secondary" },
   closed: { label: "Fechada", variant: "default" },
   paid: { label: "Paga", variant: "default" },
+  projected: { label: "Projetada", variant: "outline" },
 };
+const statusFor = (s: string) => STATUS[s] ?? { label: s ?? "—", variant: "secondary" as const };
 
 function InvoicesPage() {
   const qc = useQueryClient();
