@@ -41,7 +41,12 @@ function ImportPage() {
   const [editIdx, setEditIdx] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<ParsedTx | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [dupes, setDupes] = useState<
+    { index: number; candidate: { description: string; amount: number; occurred_at: string; type: "expense" | "income" }; existing: { id: string; description: string | null; occurred_at: string; amount: number; type: string } }[]
+    | null
+  >(null);
   const categoriesQ = useQuery({ queryKey: ["categories"], queryFn: () => listCategories() });
+
 
   async function extractText(f: File): Promise<{ text: string; format: "ofx" | "csv" | "pdf" }> {
     const name = f.name.toLowerCase();
