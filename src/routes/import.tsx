@@ -368,7 +368,54 @@ function ImportPage() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <Dialog open={!!dupes && dupes.length > 0} onOpenChange={(o) => { if (!o && !importM.isPending) setDupes(null); }}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{dupes?.length ?? 0} possíveis duplicatas detectadas</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                Estes lançamentos já existem nesta conta com o mesmo tipo, data e valor. Escolha como deseja prosseguir.
+              </p>
+              <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-border divide-y divide-border">
+                {(dupes ?? []).map((d) => (
+                  <div key={d.index} className="px-3 py-2 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium truncate">{d.candidate.description}</div>
+                      <div className={`tabular-nums ${d.candidate.type === "income" ? "text-emerald-400" : ""}`}>
+                        {d.candidate.type === "income" ? "+" : "−"}{formatBRL(d.candidate.amount)}
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {d.candidate.occurred_at} · já existente: “{d.existing.description ?? "Sem descrição"}”
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <DialogFooter className="flex-wrap gap-2">
+              <Button variant="ghost" onClick={() => setDupes(null)} disabled={importM.isPending}>
+                Cancelar
+              </Button>
+              <Button
+                variant="outline"
+                disabled={importM.isPending}
+                onClick={() => importM.mutate({ force: true, skip_indices: (dupes ?? []).map((d) => d.index) })}
+              >
+                Ignorar duplicatas e importar restante
+              </Button>
+              <Button
+                disabled={importM.isPending}
+                onClick={() => importM.mutate({ force: true })}
+              >
+                Importar todas mesmo assim
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </AppShell>
+
   );
 }
