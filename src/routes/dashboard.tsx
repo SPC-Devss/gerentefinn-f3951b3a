@@ -397,16 +397,6 @@ function AccountsWidget({ accounts }: { accounts: AccountRow[] }) {
       ) : (
         <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
 
-  return (
-    <div className="tile p-4">
-      <div className="flex items-center justify-between mb-3">
-        <div className="text-sm font-medium">Contas</div>
-        <Link to="/accounts" className="text-[10px] uppercase tracking-widest text-muted-foreground hover:text-foreground">Ver</Link>
-      </div>
-      {shown.length === 0 ? (
-        <div className="text-xs text-muted-foreground py-4 text-center">Nenhuma conta</div>
-      ) : (
-        <div className="space-y-3">
           {shown.map((a) => {
             const isCard = a.type === "credit_card";
             const limit = Number(a.credit_limit ?? 0);
