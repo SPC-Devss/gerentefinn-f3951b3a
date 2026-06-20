@@ -6,7 +6,20 @@ export const deleteMyAccount = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const { userId } = context;
-    const userTables = ["messages", "threads", "transactions", "recurrences", "goals", "accounts", "categories"] as const;
+    // Order respects FK dependencies (children before parents).
+    const userTables = [
+      "installment_items",
+      "installment_purchases",
+      "credit_card_invoices",
+      "budgets",
+      "messages",
+      "threads",
+      "transactions",
+      "recurrences",
+      "goals",
+      "accounts",
+      "categories",
+    ] as const;
     for (const t of userTables) {
       const { error } = await supabaseAdmin.from(t).delete().eq("user_id", userId);
       if (error) throw new Error(`Falha ao limpar ${t}: ${error.message}`);

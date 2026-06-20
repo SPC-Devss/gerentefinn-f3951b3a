@@ -15,19 +15,16 @@ export const listAccounts = createServerFn({ method: "GET" })
       .order("created_at", { ascending: true });
     if (error) throw new Error(error.message);
 
-    // Compute balance per account
-    const { data: txs } = await supabase
-      .from("transactions")
-      .select("account_id,type,amount")
-      .eq("user_id", userId);
+    // Aggregated balance computed in Postgres
+    const { data: balRows, error: balErr } = await supabase.rpc("account_balances", { _user_id: userId });
+    if (balErr) throw new Error(balErr.message);
     const balances: Record<string, number> = {};
-    for (const t of txs ?? []) {
-      if (!t.account_id) continue;
-      const v = Number(t.amount);
-      balances[t.account_id] = (balances[t.account_id] ?? 0) + (t.type === "income" ? v : t.type === "expense" ? -v : 0);
+    for (const r of balRows ?? []) {
+      if (r.account_id) balances[r.account_id] = Number(r.balance ?? 0);
     }
     return (accounts ?? []).map((a) => ({ ...a, balance: balances[a.id] ?? 0 }));
   });
+
 
 export const createAccount = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
