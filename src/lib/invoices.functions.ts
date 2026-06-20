@@ -208,7 +208,7 @@ export const getInvoiceDetail = createServerFn({ method: "GET" })
       supabase
         .from("credit_card_invoices")
         .select(
-          "id,account_id,reference_month,closing_date,due_date,total_amount,status,paid_at,accounts(name,color,institution)",
+          "id,account_id,reference_month,closing_date,due_date,total_amount,status,paid_at",
         )
         .eq("id", data.id)
         .eq("user_id", userId)
@@ -222,7 +222,21 @@ export const getInvoiceDetail = createServerFn({ method: "GET" })
     ]);
     if (e1) throw new Error(e1.message);
     if (e2) throw new Error(e2.message);
-    return { invoice, transactions: txs ?? [], projected: false as const };
+    let accounts: { name: string; color: string | null; institution: string | null } | null = null;
+    if (invoice?.account_id) {
+      const { data: acc } = await supabase
+        .from("accounts")
+        .select("name,color,institution")
+        .eq("id", invoice.account_id)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (acc) accounts = acc;
+    }
+    return {
+      invoice: invoice ? { ...invoice, accounts } : null,
+      transactions: txs ?? [],
+      projected: false as const,
+    };
   });
 
 export const markInvoicePaid = createServerFn({ method: "POST" })
