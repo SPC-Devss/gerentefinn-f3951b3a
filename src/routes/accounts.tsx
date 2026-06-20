@@ -179,8 +179,8 @@ function AccountForm({ initial, onDone }: { initial?: AccountRow; onDone: () => 
 
   const isEdit = !!initial;
 
-  const mut = useMutation({
-    mutationFn: () => {
+  const mut = useMutation<unknown, Error, void>({
+    mutationFn: async () => {
       const payload = {
         name,
         type,
@@ -190,9 +190,8 @@ function AccountForm({ initial, onDone }: { initial?: AccountRow; onDone: () => 
         closing_day: type === "credit_card" && closingDay ? Number(closingDay) : null,
         due_day: type === "credit_card" && dueDay ? Number(dueDay) : null,
       };
-      return isEdit
-        ? updateAccount({ data: { id: initial!.id, ...payload } })
-        : createAccount({ data: payload });
+      if (isEdit) return updateAccount({ data: { id: initial!.id, ...payload } });
+      return createAccount({ data: payload });
     },
     onSuccess: () => { toast.success(isEdit ? "Conta atualizada" : "Conta criada"); onDone(); },
     onError: (e: Error) => toast.error(e.message),
