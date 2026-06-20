@@ -124,10 +124,6 @@ export const listInvoices = createServerFn({ method: "GET" })
       };
     });
 
-    const accountsById = new Map<string, AccountLite>();
-    for (const a of accountsRes.data ?? []) {
-      accountsById.set(a.id, a as AccountLite);
-    }
     const purchaseAccount = new Map<string, string>();
     for (const p of purchasesRes.data ?? []) {
       if (p.account_id) purchaseAccount.set(p.id, p.account_id);
