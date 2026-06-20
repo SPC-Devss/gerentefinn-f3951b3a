@@ -178,6 +178,8 @@ export const bulkImportTransactions = createServerFn({ method: "POST" })
           )
           .min(1)
           .max(500),
+        force: z.boolean().optional(),
+        skip_indices: z.array(z.number().int().nonnegative()).optional(),
       })
       .parse(i),
   )
@@ -191,18 +193,78 @@ export const bulkImportTransactions = createServerFn({ method: "POST" })
     const catMap = new Map<string, string>();
     for (const c of cats ?? []) catMap.set(c.name.toLowerCase(), c.id);
 
+    const accountId = data.account_id ?? null;
+    const skip = new Set(data.skip_indices ?? []);
+
     const rows = data.transactions.map((t) => ({
       user_id: userId,
       type: t.type,
       amount: t.amount,
       description: t.description,
       occurred_at: t.occurred_at,
-      account_id: data.account_id ?? null,
+      account_id: accountId,
       category_id: t.category_name ? catMap.get(t.category_name.toLowerCase()) ?? null : null,
-      source: "import",
+      source: "import" as const,
     }));
 
-    const { error } = await supabase.from("transactions").insert(rows);
+    // Anti-duplicidade: só faz sentido quando há conta vinculada.
+    type DuplicateInfo = {
+      index: number;
+      candidate: { description: string; amount: number; occurred_at: string; type: "expense" | "income" };
+      existing: { id: string; description: string | null; occurred_at: string; amount: number; type: string };
+    };
+    let duplicates: DuplicateInfo[] = [];
+
+    if (!data.force && accountId) {
+      const dates = Array.from(new Set(rows.map((r) => r.occurred_at)));
+      const { data: existing, error: exErr } = await supabase
+        .from("transactions")
+        .select("id,description,occurred_at,amount,type,account_id")
+        .eq("user_id", userId)
+        .eq("account_id", accountId)
+        .in("occurred_at", dates);
+      if (exErr) throw new Error(exErr.message);
+      const existingArr = existing ?? [];
+
+      rows.forEach((r, idx) => {
+        if (skip.has(idx)) return;
+        const match = existingArr.find(
+          (e) =>
+            e.type === r.type &&
+            e.occurred_at === r.occurred_at &&
+            Number(e.amount) === Number(r.amount),
+        );
+        if (match) {
+          duplicates.push({
+            index: idx,
+            candidate: {
+              description: r.description,
+              amount: r.amount,
+              occurred_at: r.occurred_at,
+              type: r.type,
+            },
+            existing: {
+              id: match.id as string,
+              description: (match.description as string | null) ?? null,
+              occurred_at: match.occurred_at as string,
+              amount: Number(match.amount),
+              type: match.type as string,
+            },
+          });
+        }
+      });
+
+      if (duplicates.length > 0) {
+        return { ok: false as const, duplicate: true as const, duplicates, inserted: 0 };
+      }
+    }
+
+    const toInsert = rows.filter((_, idx) => !skip.has(idx));
+    if (toInsert.length === 0) {
+      return { ok: true as const, duplicate: false as const, inserted: 0, duplicates: [] };
+    }
+    const { error } = await supabase.from("transactions").insert(toInsert);
     if (error) throw new Error(error.message);
-    return { inserted: rows.length };
+    return { ok: true as const, duplicate: false as const, inserted: toInsert.length, duplicates: [] };
   });
+

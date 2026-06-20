@@ -41,7 +41,12 @@ function ImportPage() {
   const [editIdx, setEditIdx] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState<ParsedTx | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [dupes, setDupes] = useState<
+    { index: number; candidate: { description: string; amount: number; occurred_at: string; type: "expense" | "income" }; existing: { id: string; description: string | null; occurred_at: string; amount: number; type: string } }[]
+    | null
+  >(null);
   const categoriesQ = useQuery({ queryKey: ["categories"], queryFn: () => listCategories() });
+
 
   async function extractText(f: File): Promise<{ text: string; format: "ofx" | "csv" | "pdf" }> {
     const name = f.name.toLowerCase();
@@ -81,7 +86,7 @@ function ImportPage() {
   }
 
   const importM = useMutation({
-    mutationFn: () => {
+    mutationFn: (opts: { force?: boolean; skip_indices?: number[] } = {}) => {
       const selected = (parsed ?? []).filter((t) => t._enabled);
       return bulkImportTransactions({
         data: {
@@ -93,17 +98,25 @@ function ImportPage() {
             occurred_at: t.occurred_at,
             category_name: t.suggested_category ?? null,
           })),
+          force: opts.force === true,
+          skip_indices: opts.skip_indices,
         },
       });
     },
     onSuccess: (r) => {
+      if (r && r.ok === false && r.duplicate) {
+        setDupes(r.duplicates);
+        return;
+      }
       toast.success(`${r.inserted} transações importadas`);
       setParsed(null);
       setFile(null);
       setConfirmOpen(false);
+      setDupes(null);
     },
     onError: (e: Error) => toast.error(e.message),
   });
+
 
   const selectedCount = (parsed ?? []).filter((t) => t._enabled).length;
   const totalExpense = (parsed ?? []).filter((t) => t._enabled && t.type === "expense").reduce((s, t) => s + t.amount, 0);
@@ -346,15 +359,63 @@ function ImportPage() {
               <Button variant="ghost" onClick={() => setConfirmOpen(false)} disabled={importM.isPending}>
                 Voltar para editar
               </Button>
-              <Button onClick={() => importM.mutate()} disabled={importM.isPending}>
+              <Button onClick={() => importM.mutate({})} disabled={importM.isPending}>
                 {importM.isPending
                   ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Importando…</>
                   : <><CheckCircle2 className="h-4 w-4 mr-1" /> Confirmar e importar {selectedCount}</>}
+              </Button>
+
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={!!dupes && dupes.length > 0} onOpenChange={(o) => { if (!o && !importM.isPending) setDupes(null); }}>
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>{dupes?.length ?? 0} possíveis duplicatas detectadas</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <p className="text-muted-foreground">
+                Estes lançamentos já existem nesta conta com o mesmo tipo, data e valor. Escolha como deseja prosseguir.
+              </p>
+              <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-border divide-y divide-border">
+                {(dupes ?? []).map((d) => (
+                  <div key={d.index} className="px-3 py-2 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <div className="font-medium truncate">{d.candidate.description}</div>
+                      <div className={`tabular-nums ${d.candidate.type === "income" ? "text-emerald-400" : ""}`}>
+                        {d.candidate.type === "income" ? "+" : "−"}{formatBRL(d.candidate.amount)}
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      {d.candidate.occurred_at} · já existente: “{d.existing.description ?? "Sem descrição"}”
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <DialogFooter className="flex-wrap gap-2">
+              <Button variant="ghost" onClick={() => setDupes(null)} disabled={importM.isPending}>
+                Cancelar
+              </Button>
+              <Button
+                variant="outline"
+                disabled={importM.isPending}
+                onClick={() => importM.mutate({ force: true, skip_indices: (dupes ?? []).map((d) => d.index) })}
+              >
+                Ignorar duplicatas e importar restante
+              </Button>
+              <Button
+                disabled={importM.isPending}
+                onClick={() => importM.mutate({ force: true })}
+              >
+                Importar todas mesmo assim
               </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>
     </AppShell>
+
   );
 }
