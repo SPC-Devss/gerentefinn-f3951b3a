@@ -645,22 +645,66 @@ function TransactionsPage() {
                 </SelectContent>
               </Select>
               {quickCatOpen && (
-                <div className="flex items-end gap-2 pt-2">
-                  <div className="flex-1 space-y-1.5">
+                <div className="space-y-3 pt-2 rounded-lg border border-border p-3">
+                  <div className="space-y-1.5">
                     <Label className="text-xs">Nome</Label>
                     <Input value={quickCatName} onChange={(e) => setQuickCatName(e.target.value)} placeholder="Ex: Pet shop" />
                   </div>
-                  <div className="w-20 space-y-1.5">
-                    <Label className="text-xs">Ícone</Label>
-                    <Input value={quickCatIcon} onChange={(e) => setQuickCatIcon(e.target.value)} placeholder="🐶" />
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Ícone {quickCatIcon && <span className="ml-1">— atual: {quickCatIcon.startsWith("data:") ? <img src={quickCatIcon} alt="" className="inline h-4 w-4 align-middle rounded" /> : quickCatIcon}</span>}</Label>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(form.type === "income"
+                        ? ["💰","💵","💼","🏦","📈","🎁","🪙","💳"]
+                        : ["🛒","🍔","⛽","🏠","💡","💊","🎬","✈️","🐶","📚","👕","🚗","📱","🎓","🧾","🛠️"]
+                      ).map((emo) => (
+                        <button
+                          key={emo}
+                          type="button"
+                          onClick={() => setQuickCatIcon(emo)}
+                          className={`h-9 w-9 rounded-md border text-lg flex items-center justify-center transition ${quickCatIcon === emo ? "border-primary bg-primary/10" : "border-border hover:bg-accent"}`}
+                          aria-label={`Selecionar ${emo}`}
+                        >
+                          {emo}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="flex items-center gap-2 text-xs text-primary hover:underline cursor-pointer mt-1">
+                      <Upload className="h-3.5 w-3.5" />
+                      Enviar imagem do meu computador
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/svg+xml,image/webp"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          const okTypes = ["image/png","image/jpeg","image/svg+xml","image/webp"];
+                          if (!okTypes.includes(file.type)) {
+                            toast.error("Formato inválido. Use PNG, JPG, SVG ou WebP.");
+                            e.target.value = "";
+                            return;
+                          }
+                          if (file.size > 256 * 1024) {
+                            toast.error("Arquivo muito grande. Máximo 256 KB.");
+                            e.target.value = "";
+                            return;
+                          }
+                          const reader = new FileReader();
+                          reader.onload = () => setQuickCatIcon(String(reader.result || ""));
+                          reader.readAsDataURL(file);
+                        }}
+                      />
+                    </label>
+                    <p className="text-[10px] text-muted-foreground">PNG, JPG, SVG ou WebP · até 256 KB · recomendado 64×64 px quadrado.</p>
                   </div>
                   <Button
                     type="button"
                     size="sm"
+                    className="w-full"
                     disabled={!quickCatName.trim() || quickAddCat.isPending}
                     onClick={() => quickAddCat.mutate()}
                   >
-                    Criar
+                    Criar categoria
                   </Button>
                 </div>
               )}
