@@ -13,7 +13,8 @@ import { listTransactions, createTransaction, updateTransaction, deleteTransacti
 import { listCategories, createCategory, deleteCategory } from "@/lib/categories.functions";
 import { listAccounts } from "@/lib/accounts.functions";
 import { createInstallmentPurchase } from "@/lib/installments.functions";
-import { Pencil, Trash2, Plus, Search, Printer } from "lucide-react";
+import { createRecurrence } from "@/lib/recurrences.functions";
+import { Pencil, Trash2, Plus, Search, Printer, Upload } from "lucide-react";
 import { formatBRL } from "@/lib/format";
 import { toast } from "sonner";
 
@@ -69,6 +70,7 @@ function TransactionsPage() {
     category_id: "" as string,
     installments: false,
     installments_count: 2,
+    recurrence: "none" as "none" | "weekly" | "monthly" | "yearly",
   };
   const [form, setForm] = useState(emptyForm);
   const [quickCatOpen, setQuickCatOpen] = useState(false);
@@ -86,7 +88,21 @@ function TransactionsPage() {
     if (!txs.data) return [];
     const s = search.toLowerCase().trim();
     return txs.data.filter((t) => {
-      if (s && !t.description.toLowerCase().includes(s)) return false;
+      if (s) {
+        const acc = (t as { accounts?: { name?: string } | null }).accounts;
+        const cat = (t as { categories?: { name?: string } | null }).categories;
+        const amt = Number(t.amount);
+        const haystack = [
+          t.description,
+          acc?.name ?? "",
+          cat?.name ?? "",
+          String(amt),
+          amt.toFixed(2),
+          amt.toFixed(2).replace(".", ","),
+          formatBRL(amt),
+        ].join(" ").toLowerCase();
+        if (!haystack.includes(s)) return false;
+      }
       const d = new Date(t.occurred_at + "T00:00:00");
       if (year !== "all" && d.getFullYear() !== Number(year)) return false;
       if (month !== "all" && d.getMonth() + 1 !== Number(month)) return false;
