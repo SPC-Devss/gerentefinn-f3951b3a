@@ -174,6 +174,13 @@ export const bulkImportTransactions = createServerFn({ method: "POST" })
               description: z.string().min(1).max(200),
               occurred_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
               category_name: z.string().max(60).optional().nullable(),
+              extras: z
+                .object({
+                  kind: z.enum(["single", "recurring", "installment"]).default("single"),
+                  frequency: z.enum(["weekly", "monthly", "yearly"]).default("monthly"),
+                  installments_count: z.number().int().min(2).max(360).default(2),
+                })
+                .optional(),
             }),
           )
           .min(1)
@@ -196,18 +203,7 @@ export const bulkImportTransactions = createServerFn({ method: "POST" })
     const accountId = data.account_id ?? null;
     const skip = new Set(data.skip_indices ?? []);
 
-    const rows = data.transactions.map((t) => ({
-      user_id: userId,
-      type: t.type,
-      amount: t.amount,
-      description: t.description,
-      occurred_at: t.occurred_at,
-      account_id: accountId,
-      category_id: t.category_name ? catMap.get(t.category_name.toLowerCase()) ?? null : null,
-      source: "import" as const,
-    }));
-
-    // Anti-duplicidade: só faz sentido quando há conta vinculada.
+    // Anti-duplicidade compartilhada
     type DuplicateInfo = {
       index: number;
       candidate: { description: string; amount: number; occurred_at: string; type: "expense" | "income" };
@@ -215,56 +211,170 @@ export const bulkImportTransactions = createServerFn({ method: "POST" })
     };
     let duplicates: DuplicateInfo[] = [];
 
-    if (!data.force && accountId) {
-      const dates = Array.from(new Set(rows.map((r) => r.occurred_at)));
-      const { data: existing, error: exErr } = await supabase
-        .from("transactions")
-        .select("id,description,occurred_at,amount,type,account_id")
-        .eq("user_id", userId)
-        .eq("account_id", accountId)
-        .in("occurred_at", dates);
-      if (exErr) throw new Error(exErr.message);
-      const existingArr = existing ?? [];
-
-      rows.forEach((r, idx) => {
-        if (skip.has(idx)) return;
-        const match = existingArr.find(
-          (e) =>
-            e.type === r.type &&
-            e.occurred_at === r.occurred_at &&
-            Number(e.amount) === Number(r.amount),
-        );
-        if (match) {
-          duplicates.push({
-            index: idx,
-            candidate: {
-              description: r.description,
-              amount: r.amount,
-              occurred_at: r.occurred_at,
-              type: r.type,
-            },
-            existing: {
-              id: match.id as string,
-              description: (match.description as string | null) ?? null,
-              occurred_at: match.occurred_at as string,
-              amount: Number(match.amount),
-              type: match.type as string,
-            },
-          });
-        }
-      });
+    if (!data.force) {
+      const { findPossibleDuplicates } = await import("@/lib/duplicates.server");
+      const candidates = data.transactions.map((t) => ({
+        account_id: accountId,
+        type: t.type as "income" | "expense" | "transfer",
+        amount: t.amount,
+        occurred_at: t.occurred_at,
+        description: t.description,
+      }));
+      const matches = await findPossibleDuplicates(supabase, userId, candidates);
+      duplicates = matches
+        .filter((m) => !skip.has(m.index))
+        .map((m) => ({
+          index: m.index,
+          candidate: {
+            description: data.transactions[m.index].description,
+            amount: data.transactions[m.index].amount,
+            occurred_at: data.transactions[m.index].occurred_at,
+            type: data.transactions[m.index].type,
+          },
+          existing: {
+            id: m.existing.id,
+            description: m.existing.description,
+            occurred_at: m.existing.occurred_at,
+            amount: Number(m.existing.amount),
+            type: m.existing.type,
+          },
+        }));
 
       if (duplicates.length > 0) {
         return { ok: false as const, duplicate: true as const, duplicates, inserted: 0 };
       }
     }
 
-    const toInsert = rows.filter((_, idx) => !skip.has(idx));
-    if (toInsert.length === 0) {
-      return { ok: true as const, duplicate: false as const, inserted: 0, duplicates: [] };
+    // Particiona por kind dos extras
+    const singles: typeof data.transactions = [];
+    const recurrings: typeof data.transactions = [];
+    const installments: typeof data.transactions = [];
+    data.transactions.forEach((t, idx) => {
+      if (skip.has(idx)) return;
+      const kind = t.extras?.kind ?? "single";
+      if (kind === "recurring") recurrings.push(t);
+      else if (kind === "installment") installments.push(t);
+      else singles.push(t);
+    });
+
+    let inserted = 0;
+
+    // 1) Inserir singles em transactions
+    if (singles.length > 0) {
+      const rows = singles.map((t) => ({
+        user_id: userId,
+        type: t.type,
+        amount: t.amount,
+        description: t.description,
+        occurred_at: t.occurred_at,
+        account_id: accountId,
+        category_id: t.category_name ? catMap.get(t.category_name.toLowerCase()) ?? null : null,
+        source: "import" as const,
+      }));
+      const { error } = await supabase.from("transactions").insert(rows);
+      if (error) throw new Error(error.message);
+      inserted += rows.length;
     }
-    const { error } = await supabase.from("transactions").insert(toInsert);
-    if (error) throw new Error(error.message);
-    return { ok: true as const, duplicate: false as const, inserted: toInsert.length, duplicates: [] };
+
+    // 2) Recorrentes: insere a transação E cria a recorrência (próxima ocorrência)
+    if (recurrings.length > 0) {
+      for (const t of recurrings) {
+        const categoryId = t.category_name ? catMap.get(t.category_name.toLowerCase()) ?? null : null;
+        const freq = t.extras?.frequency ?? "monthly";
+        // Cria a recorrência primeiro com next_run_at = próxima ocorrência depois do lançamento atual
+        const nextRun = nextOccurrence(t.occurred_at, freq);
+        const { data: rec, error: recErr } = await supabase
+          .from("recurrences")
+          .insert({
+            user_id: userId,
+            description: t.description,
+            type: t.type,
+            amount: t.amount,
+            frequency: freq,
+            next_run_at: nextRun,
+            category_id: categoryId,
+            account_id: accountId,
+          })
+          .select("id")
+          .single();
+        if (recErr) throw new Error(recErr.message);
+        // Insere o lançamento atual vinculado à recorrência
+        const { error: txErr } = await supabase.from("transactions").insert({
+          user_id: userId,
+          type: t.type,
+          amount: t.amount,
+          description: t.description,
+          occurred_at: t.occurred_at,
+          account_id: accountId,
+          category_id: categoryId,
+          source: "import",
+          recurrence_id: rec.id,
+        });
+        if (txErr) throw new Error(txErr.message);
+        inserted++;
+      }
+    }
+
+    // 3) Parceladas: cria installment_purchase + items (sem inserir em transactions)
+    if (installments.length > 0) {
+      for (const t of installments) {
+        const categoryId = t.category_name ? catMap.get(t.category_name.toLowerCase()) ?? null : null;
+        const count = t.extras?.installments_count ?? 2;
+        const { data: purchase, error: e1 } = await supabase
+          .from("installment_purchases")
+          .insert({
+            user_id: userId,
+            description: t.description,
+            total_amount: t.amount,
+            installments_count: count,
+            first_due_date: t.occurred_at,
+            account_id: accountId,
+            category_id: categoryId,
+          })
+          .select("id")
+          .single();
+        if (e1) throw new Error(e1.message);
+        const each = Math.round((t.amount / count) * 100) / 100;
+        const items: { purchase_id: string; user_id: string; number: number; due_date: string; amount: number }[] = [];
+        let acc = 0;
+        for (let n = 1; n <= count; n++) {
+          const amount = n === count ? Math.round((t.amount - acc) * 100) / 100 : each;
+          acc += each;
+          items.push({
+            purchase_id: purchase.id,
+            user_id: userId,
+            number: n,
+            due_date: addMonthsIso(t.occurred_at, n - 1),
+            amount,
+          });
+        }
+        const { error: e2 } = await supabase.from("installment_items").insert(items);
+        if (e2) throw new Error(e2.message);
+        inserted++;
+      }
+    }
+
+    return { ok: true as const, duplicate: false as const, inserted, duplicates: [] };
   });
+
+function addMonthsIso(iso: string, n: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1 + n, 1));
+  const last = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 0)).getUTCDate();
+  dt.setUTCDate(Math.min(d, last));
+  return dt.toISOString().slice(0, 10);
+}
+
+function nextOccurrence(iso: string, freq: "weekly" | "monthly" | "yearly"): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (freq === "weekly") {
+    const dt = new Date(Date.UTC(y, m - 1, d + 7));
+    return dt.toISOString().slice(0, 10);
+  }
+  if (freq === "yearly") {
+    const dt = new Date(Date.UTC(y + 1, m - 1, d));
+    return dt.toISOString().slice(0, 10);
+  }
+  return addMonthsIso(iso, 1);
+}
 
