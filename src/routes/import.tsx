@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { requireAuth } from "@/lib/require-auth";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -12,9 +12,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { listAccounts } from "@/lib/accounts.functions";
 import { listCategories } from "@/lib/categories.functions";
 import { parseStatement, bulkImportTransactions } from "@/lib/import.functions";
-import { Upload, FileText, Loader2, CheckCircle2, Trash2, Pencil } from "lucide-react";
+import { Upload, FileText, Loader2, CheckCircle2, Trash2, Pencil, AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { formatBRL } from "@/lib/format";
+import { TransactionExtras, DEFAULT_EXTRAS, type TransactionExtrasValue } from "@/components/transaction-extras";
 
 export const Route = createFileRoute("/import")({
   beforeLoad: requireAuth,
@@ -29,13 +30,17 @@ type ParsedTx = {
   occurred_at: string;
   suggested_category?: string | null;
   _enabled: boolean;
+  _duplicate?: boolean;
+  _extras: TransactionExtrasValue;
 };
+
+type FileKind = "" | "debit" | "credit_card";
 
 function ImportPage() {
   const accountsQ = useQuery({ queryKey: ["accounts"], queryFn: () => listAccounts() });
+  const [fileKind, setFileKind] = useState<FileKind>("");
   const [accountId, setAccountId] = useState<string>("");
   const [file, setFile] = useState<File | null>(null);
-  const [isCreditCard, setIsCreditCard] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [parsed, setParsed] = useState<ParsedTx[] | null>(null);
   const [editIdx, setEditIdx] = useState<number | null>(null);
@@ -47,6 +52,18 @@ function ImportPage() {
   >(null);
   const categoriesQ = useQuery({ queryKey: ["categories"], queryFn: () => listCategories() });
 
+  const accountsForKind = useMemo(() => {
+    const all = accountsQ.data ?? [];
+    if (fileKind === "credit_card") return all.filter((a) => a.type === "credit_card" && !a.archived);
+    if (fileKind === "debit") return all.filter((a) => a.type !== "credit_card" && !a.archived);
+    return [];
+  }, [accountsQ.data, fileKind]);
+
+  const selectedAccount = useMemo(
+    () => (accountsQ.data ?? []).find((a) => a.id === accountId) ?? null,
+    [accountsQ.data, accountId],
+  );
+  const accountIsCreditCard = selectedAccount?.type === "credit_card";
 
   async function extractText(f: File): Promise<{ text: string; format: "ofx" | "csv" | "pdf" }> {
     const name = f.name.toLowerCase();
@@ -70,13 +87,15 @@ function ImportPage() {
   }
 
   async function handleParse() {
-    if (!file) return;
+    if (!file || !fileKind || !accountId) return;
     setParsing(true);
     setParsed(null);
     try {
       const { text, format } = await extractText(file);
-      const res = await parseStatement({ data: { text, format, is_credit_card: isCreditCard } });
-      setParsed(res.transactions.map((t) => ({ ...t, _enabled: true })));
+      const res = await parseStatement({
+        data: { text, format, is_credit_card: fileKind === "credit_card" },
+      });
+      setParsed(res.transactions.map((t) => ({ ...t, _enabled: true, _extras: { ...DEFAULT_EXTRAS } })));
       toast.success(`${res.transactions.length} transações detectadas`);
     } catch (e) {
       toast.error((e as Error).message || "Falha ao ler arquivo");
@@ -87,28 +106,40 @@ function ImportPage() {
 
   const importM = useMutation({
     mutationFn: (opts: { force?: boolean; skip_indices?: number[] } = {}) => {
-      const selected = (parsed ?? []).filter((t) => t._enabled);
+      const all = parsed ?? [];
+      // Mantém índices globais para alinhar com `duplicates.index`
+      const skipExtra = opts.skip_indices ?? [];
+      const disabledIdx = all.map((t, i) => (t._enabled ? -1 : i)).filter((i) => i >= 0);
+      const skipFinal = Array.from(new Set([...skipExtra, ...disabledIdx]));
       return bulkImportTransactions({
         data: {
           account_id: accountId || null,
-          transactions: selected.map((t) => ({
+          transactions: all.map((t) => ({
             type: t.type,
             amount: t.amount,
             description: t.description,
             occurred_at: t.occurred_at,
             category_name: t.suggested_category ?? null,
+            extras: t._extras,
           })),
           force: opts.force === true,
-          skip_indices: opts.skip_indices,
+          skip_indices: skipFinal,
         },
       });
     },
     onSuccess: (r) => {
       if (r && r.ok === false && r.duplicate) {
         setDupes(r.duplicates);
+        // marca duplicatas no estado e desmarca
+        const dupIdx = new Set(r.duplicates.map((d) => d.index));
+        setParsed((prev) =>
+          prev?.map((p, idx) =>
+            dupIdx.has(idx) ? { ...p, _duplicate: true, _enabled: false } : p,
+          ) ?? null,
+        );
         return;
       }
-      toast.success(`${r.inserted} transações importadas`);
+      toast.success(`${r.inserted} lançamentos importados`);
       setParsed(null);
       setFile(null);
       setConfirmOpen(false);
@@ -128,37 +159,55 @@ function ImportPage() {
         <div className="tile p-5 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <Label>Conta (opcional)</Label>
-              <Select value={accountId} onValueChange={setAccountId}>
-                <SelectTrigger><SelectValue placeholder="Sem vínculo" /></SelectTrigger>
+              <Label>Tipo de lançamento no arquivo <span className="text-destructive">*</span></Label>
+              <Select
+                value={fileKind}
+                onValueChange={(v) => { setFileKind(v as FileKind); setAccountId(""); setParsed(null); }}
+              >
+                <SelectTrigger><SelectValue placeholder="Selecione…" /></SelectTrigger>
                 <SelectContent>
-                  {(accountsQ.data ?? []).map((a) => (
-                    <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
-                  ))}
+                  <SelectItem value="debit">Conta corrente / débito</SelectItem>
+                  <SelectItem value="credit_card">Fatura de cartão de crédito</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>Arquivo</Label>
-              <label className="flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 cursor-pointer hover:bg-accent/40 transition">
-                <Upload className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm truncate flex-1">
-                  {file ? file.name : "Escolher .ofx, .csv ou .pdf"}
-                </span>
-                <input
-                  type="file"
-                  accept=".ofx,.csv,.pdf,application/pdf,text/csv"
-                  className="hidden"
-                  onChange={(e) => { setFile(e.target.files?.[0] ?? null); setParsed(null); }}
-                />
-              </label>
+              <Label>{fileKind === "credit_card" ? "Cartão" : "Conta"} <span className="text-destructive">*</span></Label>
+              <Select value={accountId} onValueChange={(v) => { setAccountId(v); setParsed(null); }} disabled={!fileKind}>
+                <SelectTrigger><SelectValue placeholder={!fileKind ? "Escolha o tipo acima" : "Selecione…"} /></SelectTrigger>
+                <SelectContent>
+                  {accountsForKind.map((a) => (
+                    <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {fileKind && accountsForKind.length === 0 && (
+                <p className="text-xs text-destructive">Nenhuma conta {fileKind === "credit_card" ? "de cartão" : "de débito"} cadastrada.</p>
+              )}
             </div>
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox checked={isCreditCard} onCheckedChange={(v) => setIsCreditCard(v === true)} />
-            Este arquivo é uma fatura de cartão de crédito
-          </label>
-          <Button onClick={handleParse} disabled={!file || parsing} className="w-full sm:w-auto">
+
+          <div className="space-y-1.5">
+            <Label>Arquivo <span className="text-destructive">*</span></Label>
+            <label className="flex items-center gap-2 rounded-md border border-input bg-background px-3 py-2 cursor-pointer hover:bg-accent/40 transition">
+              <Upload className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm truncate flex-1">
+                {file ? file.name : "Escolher .ofx, .csv ou .pdf"}
+              </span>
+              <input
+                type="file"
+                accept=".ofx,.csv,.pdf,application/pdf,text/csv"
+                className="hidden"
+                onChange={(e) => { setFile(e.target.files?.[0] ?? null); setParsed(null); }}
+              />
+            </label>
+          </div>
+
+          <Button
+            onClick={handleParse}
+            disabled={!file || !fileKind || !accountId || parsing}
+            className="w-full sm:w-auto"
+          >
             {parsing ? <><Loader2 className="h-4 w-4 mr-1 animate-spin" /> Analisando…</> : <><FileText className="h-4 w-4 mr-1" /> Ler arquivo</>}
           </Button>
           <p className="text-xs text-muted-foreground">
@@ -193,7 +242,20 @@ function ImportPage() {
                     }}
                   />
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium truncate">{t.description}</div>
+                    <div className="text-sm font-medium truncate flex items-center gap-2">
+                      {t.description}
+                      {t._duplicate && (
+                        <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wide rounded-full border border-destructive/40 bg-destructive/10 text-destructive px-2 py-0.5">
+                          <AlertTriangle className="h-3 w-3" /> possível duplicata
+                        </span>
+                      )}
+                      {t._extras.kind === "recurring" && (
+                        <span className="text-[10px] rounded-full border border-border bg-muted/50 px-2 py-0.5">🔁 recorrente</span>
+                      )}
+                      {t._extras.kind === "installment" && (
+                        <span className="text-[10px] rounded-full border border-border bg-muted/50 px-2 py-0.5">📦 {t._extras.installments_count}×</span>
+                      )}
+                    </div>
                     <div className="text-xs text-muted-foreground">
                       {t.occurred_at}{t.suggested_category ? ` · ${t.suggested_category}` : ""}
                     </div>
@@ -202,7 +264,7 @@ function ImportPage() {
                     {t.type === "income" ? "+" : "−"}{formatBRL(t.amount)}
                   </div>
                   <button
-                    onClick={() => { setEditIdx(i); setEditDraft({ ...t }); }}
+                    onClick={() => { setEditIdx(i); setEditDraft({ ...t, _extras: { ...t._extras } }); }}
                     className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent/40"
                     aria-label="Editar"
                   >
@@ -228,7 +290,7 @@ function ImportPage() {
         )}
 
         <Dialog open={editIdx !== null} onOpenChange={(o) => { if (!o) { setEditIdx(null); setEditDraft(null); } }}>
-          <DialogContent>
+          <DialogContent className="max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Editar lançamento</DialogTitle>
             </DialogHeader>
@@ -293,6 +355,15 @@ function ImportPage() {
                     </Select>
                   </div>
                 </div>
+
+                <TransactionExtras
+                  mode="create"
+                  value={editDraft._extras}
+                  onChange={(v) => setEditDraft({ ...editDraft, _extras: v })}
+                  accountIsCreditCard={accountIsCreditCard}
+                  isExpense={editDraft.type === "expense"}
+                  amount={Number(editDraft.amount) || 0}
+                />
               </div>
             )}
             <DialogFooter>
@@ -336,8 +407,7 @@ function ImportPage() {
               </div>
               <p className="text-sm text-muted-foreground">
                 Revise abaixo. Após confirmar, os lançamentos serão salvos
-                {accountId ? " na conta selecionada" : " sem vínculo de conta"}.
-                Esta ação pode ser desfeita removendo cada lançamento na tela de Lançamentos.
+                {selectedAccount ? ` em "${selectedAccount.name}"` : ""}.
               </p>
               <div className="max-h-[40vh] overflow-y-auto rounded-lg border border-border divide-y divide-border">
                 {(parsed ?? []).filter((t) => t._enabled).map((t, i) => (
@@ -376,7 +446,7 @@ function ImportPage() {
             </DialogHeader>
             <div className="space-y-3 text-sm">
               <p className="text-muted-foreground">
-                Estes lançamentos já existem nesta conta com o mesmo tipo, data e valor. Escolha como deseja prosseguir.
+                Estes lançamentos parecem já existir nesta conta (mesma data ou próxima, mesmo valor e descrição similar). Você pode revisar e desmarcar individualmente, ou prosseguir.
               </p>
               <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-border divide-y divide-border">
                 {(dupes ?? []).map((d) => (
@@ -388,7 +458,7 @@ function ImportPage() {
                       </div>
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      {d.candidate.occurred_at} · já existente: “{d.existing.description ?? "Sem descrição"}”
+                      {d.candidate.occurred_at} · já existente: “{d.existing.description ?? "Sem descrição"}” em {d.existing.occurred_at}
                     </div>
                   </div>
                 ))}
@@ -396,14 +466,14 @@ function ImportPage() {
             </div>
             <DialogFooter className="flex-wrap gap-2">
               <Button variant="ghost" onClick={() => setDupes(null)} disabled={importM.isPending}>
-                Cancelar
+                Revisar manualmente
               </Button>
               <Button
                 variant="outline"
                 disabled={importM.isPending}
                 onClick={() => importM.mutate({ force: true, skip_indices: (dupes ?? []).map((d) => d.index) })}
               >
-                Ignorar duplicatas e importar restante
+                Pular duplicatas e importar restante
               </Button>
               <Button
                 disabled={importM.isPending}
