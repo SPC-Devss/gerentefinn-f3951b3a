@@ -1,82 +1,126 @@
-## Respostas às suas três perguntas (antes de qualquer código)
+# Plano: criar `PRD.md` na raiz do projeto
 
-**(a) `createRecurrence` e `createInstallmentPurchase` — reaproveitar 100%?**
-- `createRecurrence`: **100% reaproveitada como está**. A assinatura já aceita `next_run_at`, `frequency`, `category_id`, `account_id`, `type`, `amount`, `description` — exatamente o que precisamos. A novidade é só do lado do cliente: ao "transformar em recorrência" um lançamento existente, calculamos `next_run_at` como a *próxima ocorrência futura* (ex.: para mensal, `occurred_at + 1 mês`) em vez de usar a data do próprio lançamento, e depois fazemos um `updateTransaction` adicional para gravar o `recurrence_id` no lançamento atual.
-- `createInstallmentPurchase`: **100% reaproveitada como está**. A "conversão" é orquestrada no servidor por uma **nova** server function `convertTransactionToInstallment` (em `src/lib/installments.functions.ts`) que: valida que o lançamento pertence ao usuário, chama internamente a mesma lógica de `createInstallmentPurchase` e, no sucesso, apaga o lançamento original. Isso mantém atomicidade do ponto de vista do cliente e evita reimplementar a lógica de criação de parcelas.
-- Pequeno ajuste **só no `updateTransaction`**: hoje ele aceita só campos básicos. Vou adicionar `recurrence_id?: string | null` na assinatura para permitir o vínculo após criar a recorrência. Não é mudança que quebra nada existente.
+## Objetivo
+Gerar um único `PRD.md` (em pt-BR) na raiz do repositório, autossuficiente, que permita a outro agente de vibe coding (Cursor, Bolt, v0, Replit Agent, etc.) recriar o **Finn** do zero com **Supabase externo** (conta própria do usuário) e stack moderna React + TanStack Start, incluindo uma seção financeira detalhada explicando fórmulas, regime de caixa vs. competência e o tratamento de despesas/receitas.
 
-**(b) Onde fica a função compartilhada de checagem de duplicidade?**
-- Novo arquivo `src/lib/duplicates.server.ts` (sufixo `.server.ts` = importável só por código server). Exporta uma única função pura:
-  ```
-  findPossibleDuplicates(sb, userId, candidates[]) → DuplicateMatch[]
-  ```
-  Recebe o cliente Supabase já autenticado, o `userId` e um array de candidatos `{ account_id, type, amount, occurred_at, description }`. Faz UMA consulta agregada (filtrando por `user_id`, datas no range ±1 dia e set de `account_id`) e devolve, para cada candidato, o `existing` mais parecido (ou `null`). Critério: mesma conta (ou ambos sem conta), mesmo tipo, mesmo valor, data com diferença ≤ 1 dia, descrição com similaridade ≥ limiar (normalização: lower + strip de acentos via `String.prototype.normalize("NFD")` + colapsar espaços; similaridade = distância de Levenshtein normalizada, sem dependência nova — implementação local pequena).
-- Os três pontos de entrada passam a usar essa função:
-  - `src/lib/transactions.functions.ts` → `createTransaction` (substitui o match exato atual)
-  - `src/lib/import.functions.ts` → `bulkImportTransactions` (substitui o match exato atual; passa a marcar duplicatas e retornar a lista, sem bloquear)
-  - `src/routes/api/chat.ts` → tool `record_transaction` (substitui o match exato atual)
+## Estrutura proposta do PRD.md
 
-**(c) Precisa de migration nova?**
-- **Não.** Confirmei o schema: `transactions.recurrence_id` (uuid) já existe e já é usado pela RPC `materialize_due_recurrences`. Não há coluna ou tabela nova. Os três requisitos são 100% código de aplicação (cliente + server functions).
+1. **Visão geral do produto** — nome interno (Conversa Financeira) vs. produto (Finn); problema; público (usuário único); princípios (confiabilidade > estética, pt-BR, tema escuro único, mobile-first).
 
----
+2. **Escopo funcional** — Auth (email + Google), Dashboard, Contas, Lançamentos (3 entradas: chat IA, importação, manual), Recorrências, Parcelamentos, Faturas de cartão, Categorias, Orçamentos, Metas, Relatórios, Forecast, Chat persistente, Detecção de duplicidade, página `/trust`.
 
-## Plano de implementação
+3. **Stack técnica** — TanStack Start v1 + React 19 + Vite 7 + TS estrito; TanStack Router/Query; Tailwind v4 + shadcn/ui + Radix + lucide + Recharts; Zod; pdfjs-dist; runtime Cloudflare Workers (alternativas Vercel/Node).
 
-### Requisito 1 — Recorrência/parcelamento no diálogo de edição
+4. **Supabase externo (não Lovable Cloud)** — criar projeto em supabase.com; envs (`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SUPABASE_SERVICE_ROLE_KEY`); três clientes (browser publishable, server publishable, admin); habilitar Email + Google; aplicar migrations via CLI.
 
-**Verificação prévia:** o diálogo "Novo lançamento" em `/transactions` JÁ tem campo de recorrência E parcelamento (checkbox "Compra parcelada"), mas a UI mistura padrões (Select para recorrência, Checkbox para parcelamento). Vou unificar nos dois diálogos.
+5. **Modelagem de dados** — DDL resumida de `profiles`, `accounts`, `categories`, `transactions`, `recurrences`, `installment_purchases`, `installment_items`, `credit_card_invoices`, `budgets`, `goals`, `threads`, `messages`; regra `user_id NOT NULL REFERENCES auth.users ON DELETE CASCADE`; RLS `auth.uid() = user_id`; GRANTs explícitos; funções/triggers (`handle_new_user`, `touch_updated_at`, `assign_transaction_to_invoice`, `recompute_invoice_total`, `trg_recompute_invoice`, `materialize_due_recurrences`, `forecast_cashflow`, `account_balances`).
 
-**Novo componente compartilhado** `src/components/transaction-extras.tsx`:
-- Recebe `mode: "create" | "edit"`, `value`, `onChange`, `accountIsCreditCard`, `type`.
-- Estado fechado: mostra link discreto `+ Transformar em recorrência ou parcelamento` (mesmo estilo visual do `+ Nova categoria`).
-- Aberto: pílulas `Único / Recorrente / Parcelado` (3 botões reaproveitando o estilo do `FilterPill` de `/installments`, extraído para `src/components/filter-pill.tsx` para uso compartilhado).
-- `Recorrente`: Select de frequência (Semanal/Mensal/Anual).
-- `Parcelado`: input de número de parcelas + caixa de aviso com `border-destructive/40 bg-destructive/10` (mesmo padrão da seção "Excluir conta" em `/settings`) explicando que vai substituir o lançamento atual.
+6. **🆕 Modelo financeiro: fórmulas, regime de caixa vs. competência e cálculos** *(seção nova e detalhada, conforme pedido)*
 
-**Diálogo "Novo lançamento" (`src/routes/transactions.tsx`)**: substitui o bloco atual de Recorrência + bloco de Parcelamento pelo novo componente. Comportamento de gravação igual ao atual.
+   6.1 **Tipos de conta e o que cada uma representa**
+   - `checking` / `savings` / `cash` / `investment`: contas de saldo direto (regime de caixa puro)
+   - `credit_card`: NÃO tem saldo no sentido tradicional; tem "fatura em aberto" e "fatura fechada"
 
-**Diálogo "Editar lançamento" (`src/routes/transactions.tsx`)**:
-- Se o `t.recurrence_id` ou pertencer a parcelamento (consulta auxiliar nova `getTransactionLink` que verifica `recurrence_id` e busca um `installment_items` cujo `purchase.description + due_date + amount` bata — ou, mais simples, descobrir o vínculo apenas pelo `recurrence_id`; para parcelamento, como hoje não há FK em `transactions`, não há como detectar pela tabela, então só mostramos selo quando `recurrence_id` existir): mostra selo no topo com ícone `Repeat` + texto "Recorrência mensal" + link "Ver em Recorrências". Para parcelamento real, isso só apareceria se no futuro houver vínculo; aceito esse limite ou, se preferir, criamos uma migration adicionando `installment_item_id` em `transactions` (me confirme — não está no plano atual).
-- Caso contrário: mostra o mesmo componente `TransactionExtras`. Ao salvar com `Recorrente`: chama `updateTransaction` normal + `createRecurrence` com `next_run_at = occurred_at + 1×frequência` + segundo `updateTransaction` com `recurrence_id`. Ao salvar com `Parcelado`: abre `AlertDialog` de confirmação ("Isto vai remover o lançamento atual e criar um parcelamento de N×…"); confirmado, chama `convertTransactionToInstallment`.
+   6.2 **Lançamentos (`transactions`) — convenções de sinal**
+   - Campo `amount` sempre positivo; o sentido é dado por `type` (`income` | `expense`)
+   - Fórmula canônica do delta de uma transação: `signed = (type='income' ? +amount : -amount)`
+   - Estornos/reembolsos são lançados como `income` na MESMA conta (cartão) → entram no recálculo de fatura
 
-**Revisão de importação (`src/routes/import.tsx`)**: o diálogo "Editar lançamento" já existente ali passa a usar o mesmo `TransactionExtras` (modo `create`, pois ainda não foi salvo). As escolhas ficam no objeto `ParsedTx` estendido com `_extras: { kind: "single"|"recurring"|"installment", frequency?, installments_count? }`, e o `bulkImportTransactions` é estendido para receber esses dados e, após inserir cada linha "recorrente", chamar `createRecurrence`; para "parcelado", chamar `createInstallmentPurchase` em vez de inserir em `transactions`.
+   6.3 **Saldo de conta corrente (regime de caixa)**
+   - Função `account_balances(_user_id)`: `SUM(CASE WHEN type='income' THEN amount WHEN type='expense' THEN -amount END)` agrupado por `account_id`
+   - Considera TODAS as datas (`occurred_at` passado e futuro) — explicação de por quê e quando filtrar por `occurred_at <= CURRENT_DATE` (saldo "disponível hoje" vs. "saldo projetado")
+   - Cartão de crédito (`type='credit_card'`) não tem linha em `account_balances` no sentido de "dinheiro disponível" — ver 6.4
 
-### Requisito 2 — Duplicidade compartilhada
+   6.4 **Faturas de cartão de crédito (regime de competência)**
+   - Cada transação em conta `credit_card` é vinculada a UMA fatura via trigger `assign_transaction_to_invoice` (BEFORE INSERT/UPDATE)
+   - Regras de competência:
+     - `closing_day` = dia do fechamento da fatura na conta
+     - Se `occurred_at <= data_fechamento_do_mes_corrente` → fatura do mês corrente
+     - Caso contrário → fatura do mês seguinte
+     - Clamp ao último dia real do mês (evita o bug histórico do `LEAST(due_day, 28)`); mostrar a expressão `LEAST(closing_day, último_dia_do_mês(ref_month))`
+   - Vencimento: `due_day` do mês seguinte ao fechamento, mesmo clamp
+   - `reference_month` = `date_trunc('month', closing_date)` — chave única `(account_id, reference_month)`
+   - Função `recompute_invoice_total`: `SUM(CASE WHEN type='expense' THEN amount ELSE -amount END)` sobre transações vinculadas → garante que estornos (`income`) abatem a fatura
+   - Trigger `trg_recompute_invoice` recalcula em INSERT/UPDATE/DELETE, e também na fatura ANTIGA quando `invoice_id` muda
 
-- Criar `src/lib/duplicates.server.ts` com `findPossibleDuplicates` (assinatura na resposta (b)).
-- **Server**: `createTransaction`, `bulkImportTransactions`, tool `record_transaction` passam a usar a função. Os retornos atuais (`{ ok:false, duplicate:true, existing }` / `{ duplicates:[…] }`) são mantidos compatíveis para não quebrar o front existente; apenas o critério interno fica mais permissivo (data ±1 dia + similaridade de descrição).
-- **Cliente**:
-  - `/transactions` → ao **editar** uma linha, dispara checagem leve (mesmo critério) e, se houver match, mostra `toast.warning` não bloqueante com botão "Salvar mesmo assim" (que reenvia com `force: true`).
-  - `/import` → revisão passa a marcar linhas com `_duplicate = true` (badge "possível duplicata" em vermelho discreto), e essas linhas vêm com `_enabled = false` por padrão. O fluxo de confirmação atual já cobre `force`.
-  - Chat → comportamento atual já está correto, só herda o novo critério.
+   6.5 **Pagamento de fatura (ponte entre competência → caixa)**
+   - Modelagem: pagamento da fatura é um lançamento `expense` na conta corrente (caixa) + marcação de `status='paid'` na fatura (competência)
+   - NÃO criar lançamento `income` no cartão para "zerar" — isso distorceria o histórico da fatura
+   - Risco a evitar: contar a despesa duas vezes (uma na transação original do cartão, outra no pagamento) — o pagamento debita o caixa, mas a despesa "real" do orçamento é a transação original
 
-### Requisito 3 — Tipo obrigatório na importação
+   6.6 **Recorrências (`recurrences`)**
+   - Tabela armazena o "molde" (não impacta saldo por si só)
+   - RPC `materialize_due_recurrences(_user_id)` insere linhas reais em `transactions` quando `next_run_at <= CURRENT_DATE`, avança `next_run_at` conforme `frequency` (`weekly`/`monthly`/`yearly`) e marca `source='recurrence'` + `recurrence_id`
+   - Quando materializadas, passam a contar normalmente em `account_balances` e em faturas (se a conta for cartão)
+   - SECURITY DEFINER + `REVOKE EXECUTE ... FROM PUBLIC` + `GRANT EXECUTE ... TO service_role` (reaplicar após cada `CREATE OR REPLACE`)
 
-`src/routes/import.tsx`:
-- Substitui o checkbox `isCreditCard` + select opcional de conta por:
-  1. Select **obrigatório** `fileKind`: `"debit"` (Conta corrente / débito) | `"credit_card"` (Fatura de cartão).
-  2. Select **obrigatório** `accountId`, filtrado por `fileKind`: `accounts.filter(a => a.type === "credit_card")` ou `a.type !== "credit_card"`.
-- Botão "Ler arquivo" `disabled` até `file && fileKind && accountId`.
-- `parseStatement` continua recebendo `is_credit_card` (derivado de `fileKind === "credit_card"`), e `bulkImportTransactions` agora sempre recebe `account_id` (deixa de ser opcional efetivamente; o servidor mantém o campo opcional para retrocompatibilidade).
+   6.7 **Parcelamentos (`installment_purchases` + `installment_items`)** — sistema PARALELO
+   - Hoje NÃO geram linhas em `transactions` — explicar essa decisão e o impacto:
+     - Não entram em `account_balances`
+     - Não entram em `credit_card_invoices` via trigger
+     - Para o usuário ver "quanto vai pesar no mês X", a UI consulta `installment_items` diretamente filtrando por mês de vencimento
+   - Fórmula de parcela: `valor_parcela = round(total / n, 2)`, com ajuste da última parcela = `total − sum(parcelas[0..n-2])` para fechar centavos
+   - Marcação `paid`/`pending` por item; "converter em despesa real" é uma operação separada (não automática)
+   - Alerta para o agente replicador: se decidir unificar com `transactions`, é decisão de modelagem que muda relatórios e fatura — exige plano explícito
 
----
+   6.8 **Previsão de fluxo de caixa (`forecast_cashflow`)**
+   - Saldo inicial = soma signed de `transactions` com `occurred_at <= CURRENT_DATE` (caixa)
+   - Para cada dia futuro D ∈ [hoje, hoje+N]: somar
+     - `-total_amount` de faturas `credit_card_invoices` com `due_date = D` e `status <> 'paid'` (a fatura SAI do caixa no vencimento)
+     - delta signed de `recurrences` com `next_run_at = D` (recorrências previstas)
+   - **Atenção**: a previsão NÃO inclui parcelamentos (limitação atual a documentar)
+   - Resultado é o saldo projetado acumulado por dia
 
-## Resumo técnico (arquivos)
+   6.9 **Relatórios e categorias**
+   - Despesa/receita por categoria em janela [início, fim]: somar `amount` por `category_id` filtrando por `type` e `occurred_at BETWEEN`
+   - Orçamentos (`budgets`): comparar consumo no período com `limit_amount` por categoria
+   - Metas (`goals`): `progresso = current_amount / target_amount`; aportes podem (ou não) ser refletidos como `expense` em conta caixa — decisão a documentar
 
-```text
-NOVO  src/lib/duplicates.server.ts                 // findPossibleDuplicates compartilhada
-NOVO  src/components/filter-pill.tsx               // extrai FilterPill de /installments
-NOVO  src/components/transaction-extras.tsx        // pílulas Único/Recorrente/Parcelado + campos
-EDIT  src/lib/installments.functions.ts            // + convertTransactionToInstallment
-EDIT  src/lib/transactions.functions.ts            // updateTransaction aceita recurrence_id; usa duplicates.server
-EDIT  src/lib/import.functions.ts                  // usa duplicates.server; aceita _extras p/ recorrência/parcelamento
-EDIT  src/routes/api/chat.ts                       // tool record_transaction usa duplicates.server
-EDIT  src/routes/transactions.tsx                  // novo componente nos dois diálogos + selo + AlertDialog conversão
-EDIT  src/routes/import.tsx                        // tipo+conta obrigatórios, badge "possível duplicata", extras por linha
-EDIT  src/routes/installments.tsx                  // passa a importar FilterPill compartilhado
-```
+   6.10 **Regime de caixa vs. competência — quadro-resumo**
+   - Tabela markdown mapeando cada feature à sua base:
+     - Saldo de conta corrente → caixa
+     - Pagamento de boleto/PIX → caixa
+     - Compra no cartão → competência (entra na fatura)
+     - Fatura paga → caixa (no dia do pagamento)
+     - Recorrência prevista → competência (só vira caixa quando materializada e ocorrida)
+     - Parcelamento → competência paralela (não afeta caixa enquanto não houver lançamento real)
+     - Forecast → projeção mista (caixa atual + competência futura)
 
-**Migrations:** nenhuma.
+   6.11 **Casos de borda e armadilhas numéricas**
+   - Datas: SEMPRE parsear `YYYY-MM-DD` manualmente (`formatDate`), nunca `new Date(iso).getMonth()` — bug de fuso
+   - Moeda: SEMPRE `formatBRL`; armazenar como `numeric(14,2)` no banco; nunca usar `float`
+   - Arredondamento: parcelas usam round-half-even por padrão JS — documentar e ajustar centavos na última parcela
+   - Mês com 28/30/31 dias: clamp de `closing_day`/`due_day` ao último dia real
+   - Fuso: o servidor usa UTC; `occurred_at` é `date` (sem hora), o que evita drift, mas exige parser manual no cliente
+   - Idempotência da materialização de recorrências (não materializar duas vezes o mesmo dia)
+   - Detecção de duplicidade compartilhada entre os 3 canais de entrada (Levenshtein ≥ 0,7 + mesma conta + mesmo tipo/valor + janela ±1 dia)
 
-Posso seguir com a implementação?
+7. **Arquitetura de pastas e convenções de código** — `src/routes/` (file-based dot-separated), `src/routes/api/`, `src/lib/*.functions.ts` (Server Functions com `createServerFn` + `requireSupabaseAuth`), `src/lib/*.server.ts`, `src/components/`, `src/integrations/supabase/`; rotas autenticadas sob `_authenticated/` (ssr:false); pt-BR; Dialog/AlertDialog em vez de `confirm()`.
+
+8. **Endpoint de chat IA `/api/chat`** — contrato POST + schemas das tools (`record_transaction`, `list_recent`, `get_summary`, `create_account`, `create_goal`...); como trocar Lovable AI Gateway por OpenAI/Anthropic/Google direto via Vercel AI SDK; streaming + persistência em `threads`/`messages`.
+
+9. **Importação de extratos** — fluxo (Tipo + Conta antes do arquivo); parsers CSV/OFX/PDF (pdfjs-dist); reuso da detecção de duplicidade.
+
+10. **Bugs históricos a evitar** — limite Zod de `icon`; clamp do dia 28; estornos ignorados em `recompute_invoice_total`; órfãos no delete de perfil; SECURITY DEFINER reconcedendo EXECUTE.
+
+11. **Mix HTML estático + React** —
+    - (A) Tudo no TanStack Start (SSR + `head()` para SEO em rotas públicas)
+    - (B) Site institucional separado (Astro/HTML puro) em `www.dominio.com` + app React em `app.dominio.com` compartilhando o mesmo Supabase; compartilhamento de sessão via cookies de domínio raiz ou SSO Supabase
+    - Recomendação: começar com (A)
+
+12. **Roadmap de implementação** — bootstrap → Supabase + Auth → CRUDs base → faturas (trigger) → recorrências + parcelamentos → dashboard/relatórios/forecast → importação → chat IA → trust + deploy.
+
+13. **Envs — checklist final** — tabela de variáveis e onde cada uma é usada.
+
+14. **Critérios de aceitação** — testes manuais mínimos por feature; checks de segurança (RLS, sem `anon` em tabelas de usuário, service_role nunca no bundle do cliente, RPCs SECURITY DEFINER protegidas).
+
+## Detalhes da entrega
+- Único arquivo: `PRD.md` na raiz
+- pt-BR; markdown rico (tabelas, exemplos curtos de DDL e fórmulas em blocos de código)
+- Sem código completo de UI — apenas DDL resumida, assinaturas de Server Functions, contratos de endpoint e fórmulas
+- Sem mencionar URLs internas do Lovable nem IDs do projeto
+- Lovable AI Gateway aparece apenas como uma das alternativas de provedor de IA
+
+## Arquivos afetados
+- Criar: `PRD.md`
+- Não altera mais nada
