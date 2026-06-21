@@ -8,7 +8,7 @@ export const listTransactions = createServerFn({ method: "GET" })
     const { supabase, userId } = context;
     const { data, error } = await supabase
       .from("transactions")
-      .select("id,type,amount,description,occurred_at,category_id,account_id,categories(name,icon),accounts(name,color,type)")
+      .select("id,type,amount,description,occurred_at,category_id,account_id,recurrence_id,categories(name,icon),accounts(name,color,type)")
       .eq("user_id", userId)
       .order("occurred_at", { ascending: false })
       .limit(500);
@@ -53,20 +53,17 @@ export const createTransaction = createServerFn({ method: "POST" })
   .handler(async ({ context, data }) => {
     const { supabase, userId } = context;
 
-    // Anti-duplicidade: mesmo account_id + occurred_at + type + amount
-    if (!data.force && data.account_id) {
-      const { data: dups, error: dupErr } = await supabase
-        .from("transactions")
-        .select("id,description,occurred_at,amount,type,account_id")
-        .eq("user_id", userId)
-        .eq("account_id", data.account_id)
-        .eq("type", data.type)
-        .eq("occurred_at", data.occurred_at)
-        .eq("amount", data.amount)
-        .limit(1);
-      if (dupErr) throw new Error(dupErr.message);
-      if (dups && dups.length > 0) {
-        return { ok: false as const, duplicate: true as const, existing: dups[0] };
+    if (!data.force) {
+      const { findPossibleDuplicates } = await import("@/lib/duplicates.server");
+      const matches = await findPossibleDuplicates(supabase, userId, [{
+        account_id: data.account_id ?? null,
+        type: data.type,
+        amount: data.amount,
+        occurred_at: data.occurred_at,
+        description: data.description,
+      }]);
+      if (matches.length > 0) {
+        return { ok: false as const, duplicate: true as const, existing: matches[0].existing };
       }
     }
 
@@ -100,6 +97,7 @@ export const updateTransaction = createServerFn({ method: "POST" })
       occurred_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
       category_id: z.string().uuid().nullable().optional(),
       account_id: z.string().uuid().nullable().optional(),
+      recurrence_id: z.string().uuid().nullable().optional(),
     }).parse(i),
   )
   .handler(async ({ context, data }) => {
@@ -128,4 +126,38 @@ export const deleteTransactionsBulk = createServerFn({ method: "POST" })
     const { error } = await supabase.from("transactions").delete().in("id", data.ids).eq("user_id", userId);
     if (error) throw new Error(error.message);
     return { ok: true, count: data.ids.length };
+  });
+
+/**
+ * Verifica se um candidato a lançamento (ainda não salvo, ou já salvo sendo editado)
+ * tem algum possível duplicado. Usado pelas UIs (toast não bloqueante).
+ * Aceita `exclude_id` para ignorar o próprio lançamento ao editar.
+ */
+export const checkDuplicateTransaction = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) =>
+    z.object({
+      type: z.enum(["income", "expense", "transfer"]),
+      amount: z.number().positive(),
+      description: z.string().min(1).max(200),
+      occurred_at: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      account_id: z.string().uuid().nullable().optional(),
+      exclude_id: z.string().uuid().optional(),
+    }).parse(i),
+  )
+  .handler(async ({ context, data }) => {
+    const { supabase, userId } = context;
+    const { findPossibleDuplicates } = await import("@/lib/duplicates.server");
+    const matches = await findPossibleDuplicates(supabase, userId, [{
+      account_id: data.account_id ?? null,
+      type: data.type,
+      amount: data.amount,
+      occurred_at: data.occurred_at,
+      description: data.description,
+    }]);
+    const filtered = data.exclude_id
+      ? matches.filter((m) => m.existing.id !== data.exclude_id)
+      : matches;
+    if (filtered.length === 0) return { duplicate: false as const };
+    return { duplicate: true as const, existing: filtered[0].existing };
   });
