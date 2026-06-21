@@ -122,24 +122,23 @@ export const Route = createFileRoute("/api/chat")({
                 ? accList.find((a) => a.name.toLowerCase().includes(account_name.toLowerCase()))
                 : null;
 
-              // Anti-duplicidade
-              if (!confirm_duplicate && acc?.id) {
-                const { data: dups } = await sb
-                  .from("transactions")
-                  .select("id,description,occurred_at,amount,type")
-                  .eq("user_id", userId)
-                  .eq("account_id", acc.id)
-                  .eq("type", type)
-                  .eq("occurred_at", occurred_at)
-                  .eq("amount", amount)
-                  .limit(1);
-                if (dups && dups.length > 0) {
+              // Anti-duplicidade compartilhada
+              if (!confirm_duplicate) {
+                const { findPossibleDuplicates } = await import("@/lib/duplicates.server");
+                const matches = await findPossibleDuplicates(sb, userId, [{
+                  account_id: acc?.id ?? null,
+                  type,
+                  amount,
+                  occurred_at,
+                  description,
+                }]);
+                if (matches.length > 0) {
                   return {
                     ok: false,
                     duplicate: true,
-                    existing: dups[0],
+                    existing: matches[0].existing,
                     message:
-                      "Já existe um lançamento idêntico nesta conta, data, tipo e valor. Pergunte ao usuário se deseja registrar mesmo assim.",
+                      "Já existe um lançamento parecido (mesma conta, valor e data próxima). Pergunte ao usuário se deseja registrar mesmo assim.",
                   };
                 }
               }
