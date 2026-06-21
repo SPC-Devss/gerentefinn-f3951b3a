@@ -254,3 +254,72 @@ export const toggleInstallmentItemPaid = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { ok: true };
   });
+
+/**
+ * Converte um lançamento avulso existente numa compra parcelada:
+ * 1. Cria a installment_purchase + items (mesma lógica de createInstallmentPurchase)
+ * 2. Remove o lançamento original
+ */
+export const convertTransactionToInstallment = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((i: unknown) =>
+    z.object({
+      transaction_id: z.string().uuid(),
+      installments_count: z.number().int().min(2).max(360),
+    }).parse(i),
+  )
+  .handler(async ({ context, data }) => {
+    const { supabase, userId } = context;
+    const { data: tx, error: txErr } = await supabase
+      .from("transactions")
+      .select("id,description,amount,occurred_at,account_id,category_id,type")
+      .eq("id", data.transaction_id)
+      .eq("user_id", userId)
+      .single();
+    if (txErr) throw new Error(txErr.message);
+    if (!tx) throw new Error("Lançamento não encontrado");
+    if (tx.type !== "expense") throw new Error("Só despesas podem virar parcelamento");
+    if (!tx.account_id) throw new Error("Lançamento precisa estar vinculado a um cartão");
+
+    const { data: purchase, error: e1 } = await supabase
+      .from("installment_purchases")
+      .insert({
+        user_id: userId,
+        description: tx.description,
+        total_amount: Number(tx.amount),
+        installments_count: data.installments_count,
+        first_due_date: tx.occurred_at,
+        account_id: tx.account_id,
+        category_id: tx.category_id ?? null,
+      })
+      .select("id")
+      .single();
+    if (e1) throw new Error(e1.message);
+
+    const total = Number(tx.amount);
+    const each = Math.round((total / data.installments_count) * 100) / 100;
+    const items: { purchase_id: string; user_id: string; number: number; due_date: string; amount: number }[] = [];
+    let acc = 0;
+    for (let n = 1; n <= data.installments_count; n++) {
+      const amount = n === data.installments_count ? Math.round((total - acc) * 100) / 100 : each;
+      acc += each;
+      items.push({
+        purchase_id: purchase.id,
+        user_id: userId,
+        number: n,
+        due_date: addMonths(tx.occurred_at, n - 1),
+        amount,
+      });
+    }
+    const { error: e2 } = await supabase.from("installment_items").insert(items);
+    if (e2) throw new Error(e2.message);
+
+    const { error: e3 } = await supabase
+      .from("transactions")
+      .delete()
+      .eq("id", data.transaction_id)
+      .eq("user_id", userId);
+    if (e3) throw new Error(e3.message);
+
+    return { ok: true, purchase_id: purchase.id };
+  });
