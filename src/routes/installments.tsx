@@ -20,6 +20,7 @@ import { Plus, Trash2, Pencil, CreditCard, Calendar, Check, X } from "lucide-rea
 import { formatBRL, formatDate } from "@/lib/format";
 import { toast } from "sonner";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { FilterPill } from "@/components/filter-pill";
 
 export const Route = createFileRoute("/installments")({
   beforeLoad: requireAuth,
