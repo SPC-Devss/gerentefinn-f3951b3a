@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { requireAuth } from "@/lib/require-auth";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
@@ -9,14 +9,19 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { listTransactions, createTransaction, updateTransaction, deleteTransaction, deleteTransactionsBulk } from "@/lib/transactions.functions";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
+  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { listTransactions, createTransaction, updateTransaction, deleteTransaction, deleteTransactionsBulk, checkDuplicateTransaction } from "@/lib/transactions.functions";
 import { listCategories, createCategory, deleteCategory } from "@/lib/categories.functions";
 import { listAccounts } from "@/lib/accounts.functions";
-import { createInstallmentPurchase } from "@/lib/installments.functions";
+import { createInstallmentPurchase, convertTransactionToInstallment } from "@/lib/installments.functions";
 import { createRecurrence } from "@/lib/recurrences.functions";
-import { Pencil, Trash2, Plus, Search, Printer, Upload } from "lucide-react";
+import { Pencil, Trash2, Plus, Search, Printer, Upload, Repeat, Layers } from "lucide-react";
 import { formatBRL } from "@/lib/format";
 import { toast } from "sonner";
+import { TransactionExtras, DEFAULT_EXTRAS, type TransactionExtrasValue } from "@/components/transaction-extras";
 
 export const Route = createFileRoute("/transactions")({
   beforeLoad: requireAuth,
@@ -32,6 +37,7 @@ type Draft = {
   occurred_at: string;
   category_id: string | null;
   account_id: string | null;
+  recurrence_id: string | null;
 };
 
 type AccountKind = "all" | "credit_card" | "non_credit";
@@ -40,6 +46,21 @@ const MONTHS = [
   "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
   "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
 ];
+
+function nextOccurrenceIso(iso: string, freq: "weekly" | "monthly" | "yearly"): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (freq === "weekly") {
+    return new Date(Date.UTC(y, m - 1, d + 7)).toISOString().slice(0, 10);
+  }
+  if (freq === "yearly") {
+    return new Date(Date.UTC(y + 1, m - 1, d)).toISOString().slice(0, 10);
+  }
+  // monthly: clamp dia ao último dia do mês alvo
+  const dt = new Date(Date.UTC(y, m, 1));
+  const last = new Date(Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth() + 1, 0)).getUTCDate();
+  dt.setUTCDate(Math.min(d, last));
+  return dt.toISOString().slice(0, 10);
+}
 
 function TransactionsPage() {
   const qc = useQueryClient();
@@ -53,6 +74,8 @@ function TransactionsPage() {
   const [year, setYear] = useState<string>(String(now.getFullYear()));
   const [kind, setKind] = useState<AccountKind>("all");
   const [edit, setEdit] = useState<Draft | null>(null);
+  const [editExtras, setEditExtras] = useState<TransactionExtrasValue>({ ...DEFAULT_EXTRAS });
+  const [convertConfirm, setConvertConfirm] = useState<{ count: number; description: string; amount: number } | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [newCat, setNewCat] = useState("");
   const [newIcon, setNewIcon] = useState("");
@@ -68,9 +91,7 @@ function TransactionsPage() {
     accountKind: "checking" as "checking" | "credit_card",
     account_id: "" as string,
     category_id: "" as string,
-    installments: false,
-    installments_count: 2,
-    recurrence: "none" as "none" | "weekly" | "monthly" | "yearly",
+    extras: { ...DEFAULT_EXTRAS } as TransactionExtrasValue,
   };
   const [form, setForm] = useState(emptyForm);
   const [quickCatOpen, setQuickCatOpen] = useState(false);
@@ -144,16 +165,82 @@ function TransactionsPage() {
     qc.invalidateQueries({ queryKey: ["accounts"] });
   };
 
+  const editAccount = useMemo(
+    () => (edit ? (accs.data ?? []).find((a) => a.id === edit.account_id) ?? null : null),
+    [edit, accs.data],
+  );
+  const editAccountIsCC = editAccount?.type === "credit_card";
 
   const upd = useMutation({
-    mutationFn: (d: Draft) =>
-      updateTransaction({
+    mutationFn: async (d: Draft) => {
+      // Sempre salva campos básicos primeiro
+      await updateTransaction({
         data: {
           id: d.id, type: d.type, amount: d.amount, description: d.description,
           occurred_at: d.occurred_at, category_id: d.category_id, account_id: d.account_id,
         },
-      }),
-    onSuccess: () => { toast.success("Lançamento atualizado"); setEdit(null); invalidate(); },
+      });
+      // Aviso não bloqueante sobre possível duplicata
+      try {
+        const dup = await checkDuplicateTransaction({
+          data: {
+            type: d.type, amount: d.amount, description: d.description,
+            occurred_at: d.occurred_at, account_id: d.account_id, exclude_id: d.id,
+          },
+        });
+        if (dup.duplicate) {
+          toast.warning(`Existe um lançamento parecido em ${dup.existing.occurred_at} (${formatBRL(Number(dup.existing.amount))}).`);
+        }
+      } catch { /* ignore */ }
+
+      // Se marcou como recorrente e ainda não tinha vínculo: cria e vincula
+      if (editExtras.kind === "recurring" && !d.recurrence_id && d.type !== "transfer") {
+        const next = nextOccurrenceIso(d.occurred_at, editExtras.frequency);
+        const rec = await createRecurrence({
+          data: {
+            description: d.description,
+            type: d.type,
+            amount: d.amount,
+            frequency: editExtras.frequency,
+            next_run_at: next,
+            category_id: d.category_id,
+            account_id: d.account_id,
+          },
+        });
+        if (rec?.id) {
+          await updateTransaction({ data: { id: d.id, recurrence_id: rec.id } });
+        }
+        return { kind: "recurring" as const };
+      }
+      return { kind: "ok" as const };
+    },
+    onSuccess: (r) => {
+      toast.success(r.kind === "recurring" ? "Lançamento salvo e recorrência criada" : "Lançamento atualizado");
+      setEdit(null);
+      setEditExtras({ ...DEFAULT_EXTRAS });
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["recurrences"] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const convert = useMutation({
+    mutationFn: async () => {
+      if (!edit) throw new Error("Lançamento ausente");
+      if (editExtras.installments_count < 2) throw new Error("Mínimo de 2 parcelas");
+      return convertTransactionToInstallment({
+        data: { transaction_id: edit.id, installments_count: editExtras.installments_count },
+      });
+    },
+    onSuccess: () => {
+      toast.success("Lançamento convertido em parcelamento");
+      setConvertConfirm(null);
+      setEdit(null);
+      setEditExtras({ ...DEFAULT_EXTRAS });
+      invalidate();
+      qc.invalidateQueries({ queryKey: ["installments"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+    },
     onError: (e: Error) => toast.error(e.message),
   });
 
@@ -165,16 +252,18 @@ function TransactionsPage() {
       if (!form.account_id) throw new Error("Selecione uma conta ou cartão");
       const account = accs.data?.find((a) => a.id === form.account_id);
       const isCC = account?.type === "credit_card";
-      if (form.installments && !isCC) throw new Error("Parcelamento só em cartão de crédito");
-      if (form.installments && form.recurrence !== "none") throw new Error("Não é possível combinar parcelamento e recorrência");
+      const ex = form.extras;
+      if (ex.kind === "installment" && !(isCC && form.type === "expense")) {
+        throw new Error("Parcelamento só em despesa de cartão de crédito");
+      }
       let createdRecurrence = false;
-      if (form.installments) {
-        if (form.installments_count < 2) throw new Error("Mínimo de 2 parcelas");
+      if (ex.kind === "installment") {
+        if (ex.installments_count < 2) throw new Error("Mínimo de 2 parcelas");
         await createInstallmentPurchase({
           data: {
             description: form.description.trim(),
             total_amount: amount,
-            installments_count: form.installments_count,
+            installments_count: ex.installments_count,
             first_due_date: form.occurred_at,
             account_id: form.account_id,
             category_id: form.category_id || null,
@@ -196,13 +285,13 @@ function TransactionsPage() {
       if (res && res.ok === false && res.duplicate) {
         return { kind: "duplicate" as const, existing: res.existing };
       }
-      if (form.recurrence !== "none") {
+      if (ex.kind === "recurring") {
         await createRecurrence({
           data: {
             description: form.description.trim(),
             type: form.type,
             amount,
-            frequency: form.recurrence,
+            frequency: ex.frequency,
             next_run_at: form.occurred_at,
             category_id: form.category_id || null,
             account_id: form.account_id,
@@ -269,6 +358,9 @@ function TransactionsPage() {
     onSuccess: () => { toast.success("Categoria removida"); qc.invalidateQueries({ queryKey: ["categories"] }); },
     onError: (e: Error) => toast.error(e.message),
   });
+
+  const formAccount = (accs.data ?? []).find((a) => a.id === form.account_id);
+  const formAccountIsCC = formAccount?.type === "credit_card";
 
   return (
     <AppShell
@@ -359,6 +451,7 @@ function TransactionsPage() {
                     const cat = (t as { categories?: { name: string; icon: string | null } | null }).categories;
                     const acc = (t as { accounts?: { name: string; color: string; type?: string } | null }).accounts;
                     const isCC = acc?.type === "credit_card";
+                    const recurrenceId = (t as { recurrence_id?: string | null }).recurrence_id ?? null;
                     return (
                       <li key={t.id} className="flex items-center gap-3 px-4 py-3 hover:bg-accent/30">
                         <Checkbox
@@ -370,7 +463,10 @@ function TransactionsPage() {
                           {cat?.icon ?? (t.type === "income" ? "💰" : t.type === "expense" ? "💳" : "🔁")}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <div className="font-medium truncate">{t.description}</div>
+                          <div className="font-medium truncate flex items-center gap-1.5">
+                            {t.description}
+                            {recurrenceId && <Repeat className="h-3 w-3 text-muted-foreground" aria-label="Recorrente" />}
+                          </div>
                           <div className="text-xs text-muted-foreground truncate">
                             {t.occurred_at} · {cat?.name ?? "Sem categoria"}
                             {acc ? ` · ${acc.name}${isCC ? " (cartão)" : ""}` : ""}
@@ -380,15 +476,19 @@ function TransactionsPage() {
                           {t.type === "expense" ? "-" : t.type === "income" ? "+" : ""}{formatBRL(Number(t.amount))}
                         </div>
                         <button
-                          onClick={() => setEdit({
-                            id: t.id,
-                            type: t.type as Draft["type"],
-                            amount: Number(t.amount),
-                            description: t.description,
-                            occurred_at: t.occurred_at,
-                            category_id: t.category_id,
-                            account_id: (t as { account_id: string | null }).account_id,
-                          })}
+                          onClick={() => {
+                            setEdit({
+                              id: t.id,
+                              type: t.type as Draft["type"],
+                              amount: Number(t.amount),
+                              description: t.description,
+                              occurred_at: t.occurred_at,
+                              category_id: t.category_id,
+                              account_id: (t as { account_id: string | null }).account_id,
+                              recurrence_id: recurrenceId,
+                            });
+                            setEditExtras({ ...DEFAULT_EXTRAS });
+                          }}
                           className="p-1.5 rounded hover:bg-accent text-muted-foreground hover:text-foreground"
                           aria-label="Editar"
                         >
@@ -450,11 +550,19 @@ function TransactionsPage() {
         </section>
       </div>
 
-      <Dialog open={edit !== null} onOpenChange={(v) => { if (!v) setEdit(null); }}>
-        <DialogContent>
+      {/* Diálogo Editar */}
+      <Dialog open={edit !== null} onOpenChange={(v) => { if (!v) { setEdit(null); setEditExtras({ ...DEFAULT_EXTRAS }); } }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Editar lançamento</DialogTitle></DialogHeader>
           {edit && (
             <div className="space-y-3">
+              {edit.recurrence_id && (
+                <div className="rounded-lg border border-border bg-muted/30 p-3 flex items-center gap-2 text-sm">
+                  <Repeat className="h-4 w-4 text-primary" />
+                  <span className="flex-1">Este lançamento faz parte de uma recorrência.</span>
+                  <Link to="/recurrences" className="text-primary text-xs hover:underline">Ver em Recorrências</Link>
+                </div>
+              )}
               <div className="space-y-1.5">
                 <Label>Descrição</Label>
                 <Input value={edit.description} onChange={(e) => setEdit({ ...edit, description: e.target.value })} />
@@ -508,20 +616,66 @@ function TransactionsPage() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {!edit.recurrence_id && (
+                <TransactionExtras
+                  mode="edit"
+                  value={editExtras}
+                  onChange={setEditExtras}
+                  accountIsCreditCard={!!editAccountIsCC}
+                  isExpense={edit.type === "expense"}
+                  amount={Number(edit.amount) || 0}
+                />
+              )}
             </div>
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEdit(null)}>Cancelar</Button>
             <Button
-              disabled={!edit || !edit.description.trim() || !(edit.amount > 0) || upd.isPending}
-              onClick={() => edit && upd.mutate(edit)}
+              disabled={!edit || !edit.description.trim() || !(edit.amount > 0) || upd.isPending || convert.isPending}
+              onClick={() => {
+                if (!edit) return;
+                if (editExtras.kind === "installment") {
+                  setConvertConfirm({
+                    count: editExtras.installments_count,
+                    description: edit.description,
+                    amount: edit.amount,
+                  });
+                  return;
+                }
+                upd.mutate(edit);
+              }}
             >
-              {upd.isPending ? "Salvando…" : "Salvar"}
+              {upd.isPending || convert.isPending ? "Salvando…" : "Salvar"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      {/* AlertDialog confirmação conversão */}
+      <AlertDialog open={!!convertConfirm} onOpenChange={(o) => { if (!o) setConvertConfirm(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <Layers className="h-5 w-5 text-destructive" /> Converter em parcelamento?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Isto vai <strong>remover o lançamento atual</strong> "{convertConfirm?.description}" e criar uma compra parcelada de {convertConfirm?.count}× a partir de {formatBRL(Number(convertConfirm?.amount ?? 0))}. A ação não pode ser desfeita.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={convert.isPending}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={convert.isPending}
+              onClick={(e) => { e.preventDefault(); convert.mutate(); }}
+            >
+              {convert.isPending ? "Convertendo…" : "Converter"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Diálogo Novo */}
       <Dialog open={createOpen} onOpenChange={(v) => { if (!v) { setCreateOpen(false); setQuickCatOpen(false); } }}>
         <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Novo lançamento</DialogTitle></DialogHeader>
@@ -537,7 +691,14 @@ function TransactionsPage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Tipo</Label>
-                <Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v as "income" | "expense", installments: v === "income" ? false : form.installments })}>
+                <Select
+                  value={form.type}
+                  onValueChange={(v) => setForm({
+                    ...form,
+                    type: v as "income" | "expense",
+                    extras: v === "income" && form.extras.kind === "installment" ? { ...DEFAULT_EXTRAS } : form.extras,
+                  })}
+                >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="expense">Despesa</SelectItem>
@@ -567,7 +728,12 @@ function TransactionsPage() {
               <Label>Pagamento</Label>
               <Select
                 value={form.accountKind}
-                onValueChange={(v) => setForm({ ...form, accountKind: v as "checking" | "credit_card", account_id: "", installments: v === "checking" ? false : form.installments })}
+                onValueChange={(v) => setForm({
+                  ...form,
+                  accountKind: v as "checking" | "credit_card",
+                  account_id: "",
+                  extras: v === "checking" && form.extras.kind === "installment" ? { ...DEFAULT_EXTRAS } : form.extras,
+                })}
               >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -595,57 +761,14 @@ function TransactionsPage() {
               )}
             </div>
 
-            <div className="space-y-1.5">
-              <Label>Recorrência</Label>
-              <Select
-                value={form.recurrence}
-                onValueChange={(v) => setForm({ ...form, recurrence: v as typeof form.recurrence, installments: v !== "none" ? false : form.installments })}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Não recorrente</SelectItem>
-                  <SelectItem value="weekly">Semanal</SelectItem>
-                  <SelectItem value="monthly">Mensal</SelectItem>
-                  <SelectItem value="yearly">Anual</SelectItem>
-                </SelectContent>
-              </Select>
-              {form.recurrence !== "none" && (
-                <p className="text-[11px] text-muted-foreground">
-                  Será criado um vínculo automático em <span className="text-foreground">Recorrências</span>.
-                </p>
-              )}
-            </div>
-
-
-
-            {form.accountKind === "credit_card" && form.type === "expense" && (
-              <div className="space-y-2 rounded-lg border border-border p-3">
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <Checkbox
-                    checked={form.installments}
-                    onCheckedChange={(v) => setForm({ ...form, installments: !!v })}
-                  />
-                  Compra parcelada
-                </label>
-                {form.installments && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs">Número de parcelas</Label>
-                    <Input
-                      type="number"
-                      min={2}
-                      max={360}
-                      value={form.installments_count}
-                      onChange={(e) => setForm({ ...form, installments_count: Math.max(2, Number(e.target.value) || 2) })}
-                    />
-                    {Number(form.amount) > 0 && (
-                      <p className="text-xs text-muted-foreground">
-                        {form.installments_count}× de {formatBRL(Number(form.amount) / form.installments_count)}
-                      </p>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
+            <TransactionExtras
+              mode="create"
+              value={form.extras}
+              onChange={(v) => setForm({ ...form, extras: v })}
+              accountIsCreditCard={!!formAccountIsCC}
+              isExpense={form.type === "expense"}
+              amount={Number(String(form.amount).replace(",", ".")) || 0}
+            />
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
@@ -750,7 +873,7 @@ function TransactionsPage() {
           {dupExisting && (
             <div className="space-y-3 text-sm">
               <p className="text-muted-foreground">
-                Já existe um lançamento idêntico (mesma conta, data, tipo e valor):
+                Já existe um lançamento parecido (mesma conta, data próxima, mesmo valor e descrição similar):
               </p>
               <div className="rounded-md border border-border p-3 space-y-1">
                 <div className="font-medium">{dupExisting.description ?? "Sem descrição"}</div>
@@ -759,24 +882,21 @@ function TransactionsPage() {
                 </div>
               </div>
               <p className="text-xs text-muted-foreground">
-                Deseja registrar mesmo assim ou cancelar?
+                Deseja registrar mesmo assim?
               </p>
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDupExisting(null)} disabled={create.isPending}>
-              Cancelar
-            </Button>
+            <Button variant="outline" onClick={() => setDupExisting(null)}>Cancelar</Button>
             <Button
               disabled={create.isPending}
               onClick={() => { setDupExisting(null); create.mutate({ force: true }); }}
             >
-              {create.isPending ? "Registrando…" : "Registrar mesmo assim"}
+              Registrar mesmo assim
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </AppShell>
-
   );
 }
