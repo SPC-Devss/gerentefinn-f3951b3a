@@ -120,6 +120,50 @@ const purchaseInput = z.object({
   notes: z.string().max(500).nullable().optional(),
 });
 
+type ParcelaCalc = { number: number; due_date: string; amount: number };
+
+function calcularParcelas(total: number, count: number, firstDue: string, startNumber = 1): ParcelaCalc[] {
+  const each = Math.round((total / count) * 100) / 100;
+  const out: ParcelaCalc[] = [];
+  let acc = 0;
+  for (let i = 0; i < count; i++) {
+    const n = startNumber + i;
+    const amount = i === count - 1 ? Math.round((total - acc) * 100) / 100 : each;
+    acc += each;
+    out.push({ number: n, due_date: addMonths(firstDue, n - 1), amount });
+  }
+  return out;
+}
+
+async function inserirParcelasComoTransactions(
+  supabase: import("@supabase/supabase-js").SupabaseClient,
+  args: {
+    userId: string;
+    purchaseId: string;
+    description: string;
+    account_id: string | null;
+    category_id: string | null;
+    installments_total: number;
+    parcelas: ParcelaCalc[];
+  },
+) {
+  const rows = args.parcelas.map((p) => ({
+    user_id: args.userId,
+    type: "expense" as const,
+    amount: p.amount,
+    description: `${args.description} (${p.number}/${args.installments_total})`,
+    category_id: args.category_id,
+    account_id: args.account_id,
+    occurred_at: p.due_date,
+    source: "installment",
+    installment_purchase_id: args.purchaseId,
+    installment_number: p.number,
+    installments_total: args.installments_total,
+  }));
+  const { error } = await supabase.from("transactions").insert(rows);
+  if (error) throw new Error(error.message);
+}
+
 export const createInstallmentPurchase = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((i: unknown) => purchaseInput.parse(i))
@@ -141,22 +185,28 @@ export const createInstallmentPurchase = createServerFn({ method: "POST" })
       .single();
     if (e1) throw new Error(e1.message);
 
-    const each = Math.round((data.total_amount / data.installments_count) * 100) / 100;
-    const items: { purchase_id: string; user_id: string; number: number; due_date: string; amount: number }[] = [];
-    let acc = 0;
-    for (let n = 1; n <= data.installments_count; n++) {
-      const amount = n === data.installments_count ? Math.round((data.total_amount - acc) * 100) / 100 : each;
-      acc += each;
-      items.push({
-        purchase_id: purchase.id,
-        user_id: userId,
-        number: n,
-        due_date: addMonths(data.first_due_date, n - 1),
-        amount,
-      });
-    }
+    const parcelas = calcularParcelas(data.total_amount, data.installments_count, data.first_due_date);
+
+    const items = parcelas.map((p) => ({
+      purchase_id: purchase.id,
+      user_id: userId,
+      number: p.number,
+      due_date: p.due_date,
+      amount: p.amount,
+    }));
     const { error: e2 } = await supabase.from("installment_items").insert(items);
     if (e2) throw new Error(e2.message);
+
+    await inserirParcelasComoTransactions(supabase, {
+      userId,
+      purchaseId: purchase.id,
+      description: data.description,
+      account_id: data.account_id ?? null,
+      category_id: data.category_id ?? null,
+      installments_total: data.installments_count,
+      parcelas,
+    });
+
     return { id: purchase.id };
   });
 
@@ -182,50 +232,49 @@ export const updateInstallmentPurchase = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
 
     if (regenerate) {
-      // delete only unpaid items and regenerate from the next unpaid number
-      const { data: existing } = await supabase
-        .from("installment_items")
-        .select("id,number,paid")
-        .eq("purchase_id", id)
-        .eq("user_id", userId);
-      const paidNumbers = (existing ?? []).filter((i) => i.paid).map((i) => i.number);
-      const paidSum = (existing ?? [])
-        .filter((i) => i.paid)
-        .reduce((s, i) => s + 0, 0); // we don't have amount here; recompute below
-
-      // fetch with amounts
       const { data: full } = await supabase
         .from("installment_items")
         .select("id,number,paid,amount,due_date")
         .eq("purchase_id", id)
         .eq("user_id", userId);
-      const paidAmount = (full ?? []).filter((i) => i.paid).reduce((s, i) => s + Number(i.amount), 0);
-      void paidSum;
+      const paidItems = (full ?? []).filter((i) => i.paid);
+      const paidNumbers = paidItems.map((i) => i.number);
+      const paidAmount = paidItems.reduce((s, i) => s + Number(i.amount), 0);
 
-      // delete unpaid
       await supabase.from("installment_items").delete().eq("purchase_id", id).eq("user_id", userId).eq("paid", false);
+
+      const startNumber = (paidNumbers.length > 0 ? Math.max(...paidNumbers) : 0) + 1;
+      await supabase
+        .from("transactions")
+        .delete()
+        .eq("user_id", userId)
+        .eq("installment_purchase_id", id)
+        .gte("installment_number", startNumber);
 
       const remainingCount = patch.installments_count - paidNumbers.length;
       if (remainingCount > 0) {
         const remainingAmount = patch.total_amount - paidAmount;
-        const each = Math.round((remainingAmount / remainingCount) * 100) / 100;
-        const startNumber = (paidNumbers.length > 0 ? Math.max(...paidNumbers) : 0) + 1;
-        const items: { purchase_id: string; user_id: string; number: number; due_date: string; amount: number }[] = [];
-        let acc = 0;
-        for (let i = 0; i < remainingCount; i++) {
-          const n = startNumber + i;
-          const amount = i === remainingCount - 1 ? Math.round((remainingAmount - acc) * 100) / 100 : each;
-          acc += each;
-          items.push({
-            purchase_id: id,
-            user_id: userId,
-            number: n,
-            due_date: addMonths(patch.first_due_date, n - 1),
-            amount,
-          });
-        }
+        const parcelas = calcularParcelas(remainingAmount, remainingCount, patch.first_due_date, startNumber);
+
+        const items = parcelas.map((p) => ({
+          purchase_id: id,
+          user_id: userId,
+          number: p.number,
+          due_date: p.due_date,
+          amount: p.amount,
+        }));
         const { error: insErr } = await supabase.from("installment_items").insert(items);
         if (insErr) throw new Error(insErr.message);
+
+        await inserirParcelasComoTransactions(supabase, {
+          userId,
+          purchaseId: id,
+          description: patch.description,
+          account_id: patch.account_id ?? null,
+          category_id: patch.category_id ?? null,
+          installments_total: patch.installments_count,
+          parcelas,
+        });
       }
     }
     return { ok: true };
@@ -296,30 +345,35 @@ export const convertTransactionToInstallment = createServerFn({ method: "POST" }
       .single();
     if (e1) throw new Error(e1.message);
 
-    const total = Number(tx.amount);
-    const each = Math.round((total / data.installments_count) * 100) / 100;
-    const items: { purchase_id: string; user_id: string; number: number; due_date: string; amount: number }[] = [];
-    let acc = 0;
-    for (let n = 1; n <= data.installments_count; n++) {
-      const amount = n === data.installments_count ? Math.round((total - acc) * 100) / 100 : each;
-      acc += each;
-      items.push({
-        purchase_id: purchase.id,
-        user_id: userId,
-        number: n,
-        due_date: addMonths(tx.occurred_at, n - 1),
-        amount,
-      });
-    }
+    const parcelas = calcularParcelas(Number(tx.amount), data.installments_count, tx.occurred_at);
+
+    const items = parcelas.map((p) => ({
+      purchase_id: purchase.id,
+      user_id: userId,
+      number: p.number,
+      due_date: p.due_date,
+      amount: p.amount,
+    }));
     const { error: e2 } = await supabase.from("installment_items").insert(items);
     if (e2) throw new Error(e2.message);
 
+    // Remove o lançamento original ANTES de inserir as parcelas (evita dupla contagem)
     const { error: e3 } = await supabase
       .from("transactions")
       .delete()
       .eq("id", data.transaction_id)
       .eq("user_id", userId);
     if (e3) throw new Error(e3.message);
+
+    await inserirParcelasComoTransactions(supabase, {
+      userId,
+      purchaseId: purchase.id,
+      description: tx.description,
+      account_id: tx.account_id,
+      category_id: tx.category_id ?? null,
+      installments_total: data.installments_count,
+      parcelas,
+    });
 
     return { ok: true, purchase_id: purchase.id };
   });
