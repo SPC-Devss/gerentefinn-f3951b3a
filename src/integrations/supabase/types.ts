@@ -447,6 +447,9 @@ export type Database = {
           created_at: string
           description: string
           id: string
+          installment_number: number | null
+          installment_purchase_id: string | null
+          installments_total: number | null
           invoice_id: string | null
           occurred_at: string
           recurrence_id: string | null
@@ -461,6 +464,9 @@ export type Database = {
           created_at?: string
           description: string
           id?: string
+          installment_number?: number | null
+          installment_purchase_id?: string | null
+          installments_total?: number | null
           invoice_id?: string | null
           occurred_at?: string
           recurrence_id?: string | null
@@ -475,6 +481,9 @@ export type Database = {
           created_at?: string
           description?: string
           id?: string
+          installment_number?: number | null
+          installment_purchase_id?: string | null
+          installments_total?: number | null
           invoice_id?: string | null
           occurred_at?: string
           recurrence_id?: string | null
@@ -495,6 +504,13 @@ export type Database = {
             columns: ["category_id"]
             isOneToOne: false
             referencedRelation: "categories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transactions_installment_purchase_id_fkey"
+            columns: ["installment_purchase_id"]
+            isOneToOne: false
+            referencedRelation: "installment_purchases"
             referencedColumns: ["id"]
           },
           {
