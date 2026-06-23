@@ -719,14 +719,16 @@ function TransactionsPage() {
                   value={form.type}
                   onValueChange={(v) => setForm({
                     ...form,
-                    type: v as "income" | "expense",
-                    extras: v === "income" && form.extras.kind === "installment" ? { ...DEFAULT_EXTRAS } : form.extras,
+                    type: v as "income" | "expense" | "transfer",
+                    extras: v !== "expense" ? { ...DEFAULT_EXTRAS } : form.extras,
+                    transfer_to: v === "transfer" ? form.transfer_to : "",
                   })}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="expense">Despesa</SelectItem>
                     <SelectItem value="income">Receita</SelectItem>
+                    <SelectItem value="transfer">Transferência</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -748,42 +750,77 @@ function TransactionsPage() {
               <Input type="date" value={form.occurred_at} onChange={(e) => setForm({ ...form, occurred_at: e.target.value })} />
             </div>
 
-            <div className="space-y-1.5">
-              <Label>Pagamento</Label>
-              <Select
-                value={form.accountKind}
-                onValueChange={(v) => setForm({
-                  ...form,
-                  accountKind: v as "checking" | "credit_card",
-                  account_id: "",
-                  extras: v === "checking" && form.extras.kind === "installment" ? { ...DEFAULT_EXTRAS } : form.extras,
-                })}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="checking">Conta corrente / dinheiro</SelectItem>
-                  <SelectItem value="credit_card">Cartão de crédito</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {form.type === "transfer" ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Sair da conta</Label>
+                  <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
+                    <SelectTrigger><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                    <SelectContent>
+                      {(accs.data ?? []).filter((a) => !a.archived).map((a) => (
+                        <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Entrar na conta</Label>
+                  <Select value={form.transfer_to} onValueChange={(v) => setForm({ ...form, transfer_to: v })}>
+                    <SelectTrigger><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                    <SelectContent>
+                      {(accs.data ?? [])
+                        .filter((a) => !a.archived && a.id !== form.account_id)
+                        .map((a) => (
+                          <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {form.account_id && form.transfer_to && form.account_id === form.transfer_to && (
+                  <p className="col-span-full text-xs text-destructive">A conta de origem deve ser diferente da conta de destino.</p>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <Label>Pagamento</Label>
+                  <Select
+                    value={form.accountKind}
+                    onValueChange={(v) => setForm({
+                      ...form,
+                      accountKind: v as "checking" | "credit_card",
+                      account_id: "",
+                      extras: v === "checking" && form.extras.kind === "installment" ? { ...DEFAULT_EXTRAS } : form.extras,
+                    })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="checking">Conta corrente / dinheiro</SelectItem>
+                      <SelectItem value="credit_card">Cartão de crédito</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
-            <div className="space-y-1.5">
-              <Label>{form.accountKind === "credit_card" ? "Cartão" : "Conta"}</Label>
-              <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
-                <SelectTrigger><SelectValue placeholder="Selecione…" /></SelectTrigger>
-                <SelectContent>
-                  {(accs.data ?? [])
-                    .filter((a) => !a.archived)
-                    .filter((a) => form.accountKind === "credit_card" ? a.type === "credit_card" : a.type !== "credit_card")
-                    .map((a) => (
-                      <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-              {!form.account_id && (
-                <p className="text-xs text-destructive">Selecione uma conta ou cartão para continuar.</p>
-              )}
-            </div>
+                <div className="space-y-1.5">
+                  <Label>{form.accountKind === "credit_card" ? "Cartão" : "Conta"}</Label>
+                  <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
+                    <SelectTrigger><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                    <SelectContent>
+                      {(accs.data ?? [])
+                        .filter((a) => !a.archived)
+                        .filter((a) => form.accountKind === "credit_card" ? a.type === "credit_card" : a.type !== "credit_card")
+                        .map((a) => (
+                          <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  {!form.account_id && (
+                    <p className="text-xs text-destructive">Selecione uma conta ou cartão para continuar.</p>
+                  )}
+                </div>
+              </>
+            )}
+
 
             <TransactionExtras
               mode="create"
