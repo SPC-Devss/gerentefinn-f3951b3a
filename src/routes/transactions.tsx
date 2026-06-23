@@ -822,14 +822,17 @@ function TransactionsPage() {
             )}
 
 
-            <TransactionExtras
-              mode="create"
-              value={form.extras}
-              onChange={(v) => setForm({ ...form, extras: v })}
-              accountIsCreditCard={!!formAccountIsCC}
-              isExpense={form.type === "expense"}
-              amount={Number(String(form.amount).replace(",", ".")) || 0}
-            />
+            {form.type !== "transfer" && (
+              <TransactionExtras
+                mode="create"
+                value={form.extras}
+                onChange={(v) => setForm({ ...form, extras: v })}
+                accountIsCreditCard={!!formAccountIsCC}
+                isExpense={form.type === "expense"}
+                amount={Number(String(form.amount).replace(",", ".")) || 0}
+              />
+            )}
+
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
