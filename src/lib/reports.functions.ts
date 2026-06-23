@@ -71,14 +71,17 @@ export const exportReportCsv = createServerFn({ method: "GET" })
       .order("occurred_at", { ascending: true });
     if (error) throw new Error(error.message);
 
+    const sanitizeCsvCell = (value: string): string =>
+      /^[=+\-@\t\r]/.test(value) ? "'" + value : value;
+
     const rows = [["Data", "Tipo", "Descrição", "Categoria", "Conta", "Valor"]];
     for (const t of txs ?? []) {
       rows.push([
         t.occurred_at as string,
         t.type === "income" ? "Receita" : "Despesa",
-        (t.description ?? "").replace(/"/g, '""'),
-        (t.categories as { name?: string } | null)?.name ?? "",
-        (t.accounts as { name?: string } | null)?.name ?? "",
+        sanitizeCsvCell(t.description ?? "").replace(/"/g, '""'),
+        sanitizeCsvCell((t.categories as { name?: string } | null)?.name ?? ""),
+        sanitizeCsvCell((t.accounts as { name?: string } | null)?.name ?? ""),
         Number(t.amount).toFixed(2),
       ]);
     }
