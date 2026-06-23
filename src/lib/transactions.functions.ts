@@ -26,7 +26,9 @@ export const summaryServerFn = createServerFn({ method: "GET" })
       .from("transactions")
       .select("type,amount")
       .eq("user_id", userId)
+      .is("transfer_id", null)
       .gte("occurred_at", start);
+
     if (error) throw new Error(error.message);
     let income = 0, expense = 0;
     for (const t of data ?? []) {
