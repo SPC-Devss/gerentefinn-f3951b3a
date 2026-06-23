@@ -253,6 +253,25 @@ function TransactionsPage() {
       const amount = Number(String(form.amount).replace(",", "."));
       if (!form.description.trim()) throw new Error("Informe a descrição");
       if (!(amount > 0)) throw new Error("Informe um valor válido");
+
+      // Transferência: duas pernas vinculadas por transfer_id
+      if (form.type === "transfer") {
+        if (!form.account_id) throw new Error("Selecione a conta de origem");
+        if (!form.transfer_to) throw new Error("Selecione a conta de destino");
+        if (form.account_id === form.transfer_to) throw new Error("A conta de origem deve ser diferente do destino");
+        await createTransfer({
+          data: {
+            from_account_id: form.account_id,
+            to_account_id: form.transfer_to,
+            amount,
+            description: form.description.trim(),
+            occurred_at: form.occurred_at,
+            category_id: form.category_id || null,
+          },
+        });
+        return { kind: "ok" as const, createdRecurrence: false };
+      }
+
       if (!form.account_id) throw new Error("Selecione uma conta ou cartão");
       const account = accs.data?.find((a) => a.id === form.account_id);
       const isCC = account?.type === "credit_card";
@@ -293,7 +312,7 @@ function TransactionsPage() {
         await createRecurrence({
           data: {
             description: form.description.trim(),
-            type: form.type,
+            type: form.type as "income" | "expense",
             amount,
             frequency: ex.frequency,
             next_run_at: form.occurred_at,
@@ -305,6 +324,7 @@ function TransactionsPage() {
       }
       return { kind: "ok" as const, createdRecurrence };
     },
+
     onSuccess: (r) => {
       if (r.kind === "duplicate") {
         setDupExisting({
