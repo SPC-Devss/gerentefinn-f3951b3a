@@ -452,8 +452,10 @@ export type Database = {
           installments_total: number | null
           invoice_id: string | null
           occurred_at: string
+          paid_invoice_id: string | null
           recurrence_id: string | null
           source: string
+          transfer_id: string | null
           type: Database["public"]["Enums"]["tx_type"]
           user_id: string
         }
@@ -469,8 +471,10 @@ export type Database = {
           installments_total?: number | null
           invoice_id?: string | null
           occurred_at?: string
+          paid_invoice_id?: string | null
           recurrence_id?: string | null
           source?: string
+          transfer_id?: string | null
           type: Database["public"]["Enums"]["tx_type"]
           user_id: string
         }
@@ -486,8 +490,10 @@ export type Database = {
           installments_total?: number | null
           invoice_id?: string | null
           occurred_at?: string
+          paid_invoice_id?: string | null
           recurrence_id?: string | null
           source?: string
+          transfer_id?: string | null
           type?: Database["public"]["Enums"]["tx_type"]
           user_id?: string
         }
@@ -511,6 +517,13 @@ export type Database = {
             columns: ["installment_purchase_id"]
             isOneToOne: false
             referencedRelation: "installment_purchases"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transactions_paid_invoice_id_fkey"
+            columns: ["paid_invoice_id"]
+            isOneToOne: false
+            referencedRelation: "credit_card_invoices"
             referencedColumns: ["id"]
           },
           {
