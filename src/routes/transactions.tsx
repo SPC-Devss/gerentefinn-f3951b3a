@@ -14,10 +14,12 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { listTransactions, createTransaction, updateTransaction, deleteTransaction, deleteTransactionsBulk, checkDuplicateTransaction } from "@/lib/transactions.functions";
+import { createTransfer } from "@/lib/transfers.functions";
 import { listCategories, createCategory, deleteCategory } from "@/lib/categories.functions";
 import { listAccounts } from "@/lib/accounts.functions";
 import { createInstallmentPurchase, convertTransactionToInstallment } from "@/lib/installments.functions";
 import { createRecurrence } from "@/lib/recurrences.functions";
+
 import { Pencil, Trash2, Plus, Search, Printer, Upload, Repeat, Layers } from "lucide-react";
 import { formatBRL } from "@/lib/format";
 import { toast } from "sonner";
@@ -84,16 +86,18 @@ function TransactionsPage() {
   const todayIso = new Date().toISOString().slice(0, 10);
   const [createOpen, setCreateOpen] = useState(false);
   const emptyForm = {
-    type: "expense" as "income" | "expense",
+    type: "expense" as "income" | "expense" | "transfer",
     description: "",
     amount: "" as string,
     occurred_at: todayIso,
     accountKind: "checking" as "checking" | "credit_card",
     account_id: "" as string,
+    transfer_to: "" as string,
     category_id: "" as string,
     extras: { ...DEFAULT_EXTRAS } as TransactionExtrasValue,
   };
   const [form, setForm] = useState(emptyForm);
+
   const [quickCatOpen, setQuickCatOpen] = useState(false);
   const [quickCatName, setQuickCatName] = useState("");
   const [quickCatIcon, setQuickCatIcon] = useState("");
@@ -249,6 +253,25 @@ function TransactionsPage() {
       const amount = Number(String(form.amount).replace(",", "."));
       if (!form.description.trim()) throw new Error("Informe a descrição");
       if (!(amount > 0)) throw new Error("Informe um valor válido");
+
+      // Transferência: duas pernas vinculadas por transfer_id
+      if (form.type === "transfer") {
+        if (!form.account_id) throw new Error("Selecione a conta de origem");
+        if (!form.transfer_to) throw new Error("Selecione a conta de destino");
+        if (form.account_id === form.transfer_to) throw new Error("A conta de origem deve ser diferente do destino");
+        await createTransfer({
+          data: {
+            from_account_id: form.account_id,
+            to_account_id: form.transfer_to,
+            amount,
+            description: form.description.trim(),
+            occurred_at: form.occurred_at,
+            category_id: form.category_id || null,
+          },
+        });
+        return { kind: "ok" as const, createdRecurrence: false };
+      }
+
       if (!form.account_id) throw new Error("Selecione uma conta ou cartão");
       const account = accs.data?.find((a) => a.id === form.account_id);
       const isCC = account?.type === "credit_card";
@@ -289,7 +312,7 @@ function TransactionsPage() {
         await createRecurrence({
           data: {
             description: form.description.trim(),
-            type: form.type,
+            type: form.type as "income" | "expense",
             amount,
             frequency: ex.frequency,
             next_run_at: form.occurred_at,
@@ -301,6 +324,7 @@ function TransactionsPage() {
       }
       return { kind: "ok" as const, createdRecurrence };
     },
+
     onSuccess: (r) => {
       if (r.kind === "duplicate") {
         setDupExisting({
@@ -695,14 +719,16 @@ function TransactionsPage() {
                   value={form.type}
                   onValueChange={(v) => setForm({
                     ...form,
-                    type: v as "income" | "expense",
-                    extras: v === "income" && form.extras.kind === "installment" ? { ...DEFAULT_EXTRAS } : form.extras,
+                    type: v as "income" | "expense" | "transfer",
+                    extras: v !== "expense" ? { ...DEFAULT_EXTRAS } : form.extras,
+                    transfer_to: v === "transfer" ? form.transfer_to : "",
                   })}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="expense">Despesa</SelectItem>
                     <SelectItem value="income">Receita</SelectItem>
+                    <SelectItem value="transfer">Transferência</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -724,51 +750,89 @@ function TransactionsPage() {
               <Input type="date" value={form.occurred_at} onChange={(e) => setForm({ ...form, occurred_at: e.target.value })} />
             </div>
 
-            <div className="space-y-1.5">
-              <Label>Pagamento</Label>
-              <Select
-                value={form.accountKind}
-                onValueChange={(v) => setForm({
-                  ...form,
-                  accountKind: v as "checking" | "credit_card",
-                  account_id: "",
-                  extras: v === "checking" && form.extras.kind === "installment" ? { ...DEFAULT_EXTRAS } : form.extras,
-                })}
-              >
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="checking">Conta corrente / dinheiro</SelectItem>
-                  <SelectItem value="credit_card">Cartão de crédito</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+            {form.type === "transfer" ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Sair da conta</Label>
+                  <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
+                    <SelectTrigger><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                    <SelectContent>
+                      {(accs.data ?? []).filter((a) => !a.archived).map((a) => (
+                        <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Entrar na conta</Label>
+                  <Select value={form.transfer_to} onValueChange={(v) => setForm({ ...form, transfer_to: v })}>
+                    <SelectTrigger><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                    <SelectContent>
+                      {(accs.data ?? [])
+                        .filter((a) => !a.archived && a.id !== form.account_id)
+                        .map((a) => (
+                          <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {form.account_id && form.transfer_to && form.account_id === form.transfer_to && (
+                  <p className="col-span-full text-xs text-destructive">A conta de origem deve ser diferente da conta de destino.</p>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <Label>Pagamento</Label>
+                  <Select
+                    value={form.accountKind}
+                    onValueChange={(v) => setForm({
+                      ...form,
+                      accountKind: v as "checking" | "credit_card",
+                      account_id: "",
+                      extras: v === "checking" && form.extras.kind === "installment" ? { ...DEFAULT_EXTRAS } : form.extras,
+                    })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="checking">Conta corrente / dinheiro</SelectItem>
+                      <SelectItem value="credit_card">Cartão de crédito</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
-            <div className="space-y-1.5">
-              <Label>{form.accountKind === "credit_card" ? "Cartão" : "Conta"}</Label>
-              <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
-                <SelectTrigger><SelectValue placeholder="Selecione…" /></SelectTrigger>
-                <SelectContent>
-                  {(accs.data ?? [])
-                    .filter((a) => !a.archived)
-                    .filter((a) => form.accountKind === "credit_card" ? a.type === "credit_card" : a.type !== "credit_card")
-                    .map((a) => (
-                      <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
-                    ))}
-                </SelectContent>
-              </Select>
-              {!form.account_id && (
-                <p className="text-xs text-destructive">Selecione uma conta ou cartão para continuar.</p>
-              )}
-            </div>
+                <div className="space-y-1.5">
+                  <Label>{form.accountKind === "credit_card" ? "Cartão" : "Conta"}</Label>
+                  <Select value={form.account_id} onValueChange={(v) => setForm({ ...form, account_id: v })}>
+                    <SelectTrigger><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                    <SelectContent>
+                      {(accs.data ?? [])
+                        .filter((a) => !a.archived)
+                        .filter((a) => form.accountKind === "credit_card" ? a.type === "credit_card" : a.type !== "credit_card")
+                        .map((a) => (
+                          <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  {!form.account_id && (
+                    <p className="text-xs text-destructive">Selecione uma conta ou cartão para continuar.</p>
+                  )}
+                </div>
+              </>
+            )}
 
-            <TransactionExtras
-              mode="create"
-              value={form.extras}
-              onChange={(v) => setForm({ ...form, extras: v })}
-              accountIsCreditCard={!!formAccountIsCC}
-              isExpense={form.type === "expense"}
-              amount={Number(String(form.amount).replace(",", ".")) || 0}
-            />
+
+            {form.type !== "transfer" && (
+              <TransactionExtras
+                mode="create"
+                value={form.extras}
+                onChange={(v) => setForm({ ...form, extras: v })}
+                accountIsCreditCard={!!formAccountIsCC}
+                isExpense={form.type === "expense"}
+                amount={Number(String(form.amount).replace(",", ".")) || 0}
+              />
+            )}
+
 
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
@@ -858,9 +922,17 @@ function TransactionsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
-            <Button disabled={create.isPending || !form.account_id} onClick={() => create.mutate({})}>
+            <Button
+              disabled={
+                create.isPending ||
+                !form.account_id ||
+                (form.type === "transfer" && (!form.transfer_to || form.account_id === form.transfer_to))
+              }
+              onClick={() => create.mutate({})}
+            >
               {create.isPending ? "Salvando…" : "Salvar lançamento"}
             </Button>
+
           </DialogFooter>
         </DialogContent>
       </Dialog>

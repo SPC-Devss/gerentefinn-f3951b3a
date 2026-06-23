@@ -10,8 +10,10 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Plus, Trash2, Pencil, Wallet, CreditCard, PiggyBank, Banknote, TrendingUp } from "lucide-react";
+import { CreditCardTile } from "@/components/credit-card-tile";
 import { formatBRL } from "@/lib/format";
 import { toast } from "sonner";
+
 
 export const Route = createFileRoute("/accounts")({
   beforeLoad: requireAuth,
@@ -144,9 +146,19 @@ function AccountsPage() {
               <div className="text-sm text-muted-foreground">Nenhum cartão de crédito.</div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {cards.map(renderCard)}
+                {cards.map((a) => (
+                  <CreditCardTile
+                    key={a.id}
+                    account={a}
+                    onEdit={() => setEditing(a)}
+                    onDelete={() => {
+                      if (confirm(`Remover "${a.name}"? Todas as movimentações ligadas a essa conta ficarão sem vínculo.`)) del.mutate(a.id);
+                    }}
+                  />
+                ))}
               </div>
             )}
+
           </section>
         </div>
       )}

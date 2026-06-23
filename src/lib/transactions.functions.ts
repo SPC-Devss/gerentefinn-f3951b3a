@@ -8,10 +8,11 @@ export const listTransactions = createServerFn({ method: "GET" })
     const { supabase, userId } = context;
     const { data, error } = await supabase
       .from("transactions")
-      .select("id,type,amount,description,occurred_at,category_id,account_id,recurrence_id,categories(name,icon),accounts(name,color,type)")
+      .select("id,type,amount,description,occurred_at,category_id,account_id,recurrence_id,transfer_id,paid_invoice_id,categories(name,icon),accounts(name,color,type)")
       .eq("user_id", userId)
       .order("occurred_at", { ascending: false })
       .limit(500);
+
     if (error) throw new Error(error.message);
     return data ?? [];
   });
@@ -26,7 +27,9 @@ export const summaryServerFn = createServerFn({ method: "GET" })
       .from("transactions")
       .select("type,amount")
       .eq("user_id", userId)
+      .is("transfer_id", null)
       .gte("occurred_at", start);
+
     if (error) throw new Error(error.message);
     let income = 0, expense = 0;
     for (const t of data ?? []) {
