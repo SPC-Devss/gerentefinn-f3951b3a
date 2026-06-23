@@ -14,10 +14,12 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { listTransactions, createTransaction, updateTransaction, deleteTransaction, deleteTransactionsBulk, checkDuplicateTransaction } from "@/lib/transactions.functions";
+import { createTransfer } from "@/lib/transfers.functions";
 import { listCategories, createCategory, deleteCategory } from "@/lib/categories.functions";
 import { listAccounts } from "@/lib/accounts.functions";
 import { createInstallmentPurchase, convertTransactionToInstallment } from "@/lib/installments.functions";
 import { createRecurrence } from "@/lib/recurrences.functions";
+
 import { Pencil, Trash2, Plus, Search, Printer, Upload, Repeat, Layers } from "lucide-react";
 import { formatBRL } from "@/lib/format";
 import { toast } from "sonner";
@@ -84,16 +86,18 @@ function TransactionsPage() {
   const todayIso = new Date().toISOString().slice(0, 10);
   const [createOpen, setCreateOpen] = useState(false);
   const emptyForm = {
-    type: "expense" as "income" | "expense",
+    type: "expense" as "income" | "expense" | "transfer",
     description: "",
     amount: "" as string,
     occurred_at: todayIso,
     accountKind: "checking" as "checking" | "credit_card",
     account_id: "" as string,
+    transfer_to: "" as string,
     category_id: "" as string,
     extras: { ...DEFAULT_EXTRAS } as TransactionExtrasValue,
   };
   const [form, setForm] = useState(emptyForm);
+
   const [quickCatOpen, setQuickCatOpen] = useState(false);
   const [quickCatName, setQuickCatName] = useState("");
   const [quickCatIcon, setQuickCatIcon] = useState("");
